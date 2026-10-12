@@ -1,0 +1,5 @@
+ba87a4f36e123f77da72c0e1a17e611d0b6b33e4ca0a6a8a4847feb30ac5a79e  launcher/tools/linux-arm64/uv
+242e462a63f5a3c0421d68557006193ecbfb61321cba0fe8542213ac62d92563  launcher/tools/linux-x64/uv
+1bd368f1bdd1fc4067a9f9d5d7394363e83490e47c86b26056760abe1c4155fb  launcher/tools/macos-arm64/uv
+2bbebb3daa6a1f6e82defe27ec7f17c26664851b1b5c396eeb64a53c805b1cee  launcher/tools/macos-x64/uv
+f94eddb81f3addca6ef8f2361a70c3edde31adcbd1000a55fc6674306ae0b1e7  launcher/tools/windows-x64/uv.exe

@@ -1,0 +1,16 @@
+# private development material
+dev/
+dev-private/
+AGENTS.md
+CLAUDE.md
+CODEX.md
+GEMINI.md
+# environments, caches, build output
+app/.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+app/launcher/tools/
+release/
+*.zip
+.env*

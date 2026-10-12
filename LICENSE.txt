@@ -1,0 +1,14 @@
+Goosnav Frame
+Copyright (c) 2026 Goosnav LLC. All rights reserved.
+
+This software is licensed for use by Goosnav LLC and its authorised users.
+It may not be redistributed or resold without written permission.
+
+THIRD-PARTY COMPONENTS
+----------------------
+- TeX Gyre Heros and TeX Gyre Termes fonts (app/static/fonts): GUST Font
+  License; see app/static/fonts/GUST-FONT-LICENSE.txt.
+- FFmpeg, downloaded at setup through the imageio-ffmpeg package: LGPL/GPL;
+  source at https://ffmpeg.org.
+- Python, NumPy (BSD), Pillow (MIT-CMU), imageio-ffmpeg (BSD-2-Clause) and
+  uv (MIT/Apache-2.0) are downloaded or bundled under their own licences.

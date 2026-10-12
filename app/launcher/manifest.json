@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "app_id": "com.goosnav.frame",
+  "display_name": "Goosnav Frame",
+  "python": "3.12.10",
+  "entry_module": "goosnav_frame.start",
+  "ready_path": "/health/ready",
+  "startup_timeout_seconds": 180,
+  "preferred_port": 8787,
+  "data_directory_name": "GoosnavFrame"
+}

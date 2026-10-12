@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="frame-token" content="{{TOKEN}}">
+<title>Goosnav Frame</title>
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/app.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <h1>Goosnav Frame</h1>
+  <span id="lan" class="muted"></span>
+  <span class="spacer"></span>
+  <button id="quit" class="ghost" hidden>Quit</button>
+</header>
+
+<main class="layout">
+  <section class="stage" aria-label="Preview">
+    <div class="frame-wrap" id="frameWrap">
+      <img id="preview" alt="Preview of the framed ad">
+      <video id="pvideo" playsinline controls loop hidden></video>
+      <div id="dropHint" class="drop-hint" hidden>Drop an image or video</div>
+      <div id="busy" class="busy" hidden>Rendering…</div>
+    </div>
+    <div class="timeline">
+      <button id="quick">Play preview</button>
+      <button id="backToFrame" class="ghost" hidden>Back to frame</button>
+      <input type="range" id="time" min="0" max="1" step="0.01" value="0" aria-label="Preview time">
+      <span id="tlabel" class="muted mono">0.00 s</span>
+    </div>
+    <p id="status" class="status" role="status"></p>
+  </section>
+
+  <aside class="panel">
+    <details open>
+      <summary>Media</summary>
+      <div class="row">
+        <label class="button primary">Upload image or video
+          <input type="file" id="file" accept="image/*,video/*" hidden>
+        </label>
+        <button id="noMedia" class="ghost">No media</button>
+        <button id="refreshMedia" class="ghost" title="Rescan library folders">Refresh</button>
+      </div>
+      <div id="uploadBar" class="bar" hidden><span></span></div>
+      <div class="row">
+        <input type="search" id="mediaFilter" placeholder="Filter by name">
+      </div>
+      <div id="mediaGrid" class="grid"></div>
+      <p id="mediaInfo" class="muted small"></p>
+    </details>
+
+    <details open>
+      <summary>Title</summary>
+      <div id="f-title" class="fields"></div>
+    </details>
+
+    <details open>
+      <summary>Link</summary>
+      <div id="f-link" class="fields"></div>
+    </details>
+
+    <details>
+      <summary>Retro text (PS1 look)</summary>
+      <div id="f-retro" class="fields"></div>
+    </details>
+
+    <details open>
+      <summary>Layout and media placement</summary>
+      <div id="f-media" class="fields"></div>
+    </details>
+
+    <details>
+      <summary>Media effects</summary>
+      <div id="f-mediafx" class="fields"></div>
+    </details>
+
+    <details>
+      <summary>Canvas</summary>
+      <div id="f-canvas" class="fields"></div>
+      <div class="row">
+        <label class="button ghost">Add a font file
+          <input type="file" id="fontFile" accept=".ttf,.otf,.ttc" hidden>
+        </label>
+      </div>
+    </details>
+
+    <details>
+      <summary>Presets</summary>
+      <div class="row">
+        <select id="presetSelect" aria-label="Saved presets"><option value="">Saved presets…</option></select>
+        <button id="presetLoad" class="ghost">Load</button>
+        <button id="presetDelete" class="ghost">Delete</button>
+      </div>
+      <div class="row">
+        <input type="text" id="presetName" placeholder="Preset name" maxlength="60">
+        <button id="presetSave">Save current</button>
+      </div>
+      <div class="row"><button id="resetAll" class="ghost">Reset everything to defaults</button></div>
+    </details>
+
+    <details open>
+      <summary>Export</summary>
+      <div id="f-export" class="fields"></div>
+      <p id="planInfo" class="muted small"></p>
+      <div class="row">
+        <button id="exportBtn" class="primary">Export</button>
+        <button id="cancelBtn" class="ghost" hidden>Cancel</button>
+      </div>
+      <div id="exportBar" class="bar" hidden><span></span></div>
+      <ul id="exports" class="exports"></ul>
+    </details>
+
+    <details id="libraryBox" hidden>
+      <summary>Library folders</summary>
+      <p class="muted small">Folders on this computer to list in Media (one per line). Only editable here, not from other devices.</p>
+      <textarea id="roots" rows="3"></textarea>
+      <div class="row"><button id="rootsSave">Save folders</button></div>
+    </details>
+
+    <p class="muted small foot">Goosnav Frame {{VERSION}}</p>
+  </aside>
+</main>
+</body>
+</html>
