@@ -6,7 +6,7 @@ Photos now default to PNG, with the full image centered between the title and li
 
 ## Export a folder
 
-1. Click **Folder batch** at the top of the panel on the computer running Frame.
+1. Click **Batch**, then expand **Use a local folder** on the computer running Frame.
 2. Click **Choose folder…** on macOS, or paste the source folder path and click **Load path**. The first readable file appears in the preview. Each supported image or video directly in that folder produces one ad; subfolders are not scanned.
 3. Leave the output field empty to save into **Goosnav Exports** within the source folder, or enter another output directory.
 4. Choose **Same title for every ad** to use the Title text, or **Random line from text file**. The default file is `app/captions/Goosnav_Phrasebook_Curated.txt` (356 captions). You can replace that path with any UTF-8 text file, one caption per nonblank line, up to 400 characters per caption. Random choices are independent and may repeat.
@@ -27,8 +27,14 @@ node --check app/static/app.js
 
 ## Retro media looks
 
-Choose **Single image / video** for one file, or **Folder batch** for a folder. **Media look** applies to the preview and final export, including every batch item. Choose Early 3D dither, 1996 web GIF, CRT scanlines, four-tone handheld, photocopied zine, clean pixels, or poster color. Adjust pixel size and effect strength; Original leaves the media untouched. Output stays at the selected canvas resolution. Text and borders are processed separately.
+Choose **Single** for one file or **Batch** for several files. **Media look** applies to the preview and final export, including every batch item. Choose Early 3D dither, 1996 web GIF, CRT scanlines, four-tone handheld, photocopied zine, clean pixels, or poster color. Adjust pixel size and effect strength; Original leaves the media untouched. Output stays at the selected canvas resolution. Text and borders are processed separately.
 
 ## Updated launcher
 
-The header shows version 0.2.0. Start scripts now reuse only a server running the same source build. If another version occupies port 8787, the updated copy opens on a free port and prints its address; existing renders are not terminated. Subsequent launches reuse the updated copy. macOS scripts find uv in Homebrew and user install locations even with Finder's limited PATH, and keep startup errors visible. These changes were exercised on macOS; Windows/Linux native binaries were not rebuilt or certified by this update. Folder chooser dialogs are available on macOS; other systems can paste paths.
+The header shows version 0.2.1. Start scripts now reuse only a server running the same source build. If another version occupies port 8787, the updated copy opens on a free port and prints its address; existing renders are not terminated. Subsequent launches reuse the updated copy. macOS scripts find uv in Homebrew and user install locations even with Finder's limited PATH, and keep startup errors visible. These changes were exercised on macOS; Windows/Linux native binaries were not rebuilt or certified by this update. Folder chooser dialogs are available on macOS; other systems can paste paths.
+
+## Batch uploads (0.2.1)
+
+The **Single** and **Batch** tabs are always visible. In Batch, use **Choose files** to select multiple images/videos, or **Upload folder** to upload a folder from the browser. Click a queued filename to preview it; × removes it from the queue. **Export batch** renders each file and provides Download links. Uploaded batches save to the application's exports directory. The queue survives a page refresh.
+
+On the host, **Use a local folder** retains the direct-folder workflow and custom output directory. Remote connections can upload batches and use the bundled phrasebook without access to host filesystem paths.

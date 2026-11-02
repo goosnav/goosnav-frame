@@ -325,11 +325,11 @@ function drawMedia() {
     b.addEventListener("click", () => selectMedia(it.id));
     grid.appendChild(b);
   }
-  if (!grid.children.length) grid.innerHTML = '<p class="muted small">Nothing here yet. Upload an image or video.</p>';
+  if (!grid.children.length) grid.replaceChildren();
   const cur = mediaItems.find((m) => m.id === mediaId);
   $("mediaInfo").textContent = cur
     ? `${cur.name} · ${cur.info.width}×${cur.info.height}` + (cur.info.kind === "video" ? ` · ${cur.info.duration.toFixed(2)} s · ${cur.info.fps} fps${cur.info.has_audio ? " · audio" : ""}` : "")
-    : "No media selected: the export will be text only.";
+    : "";
 }
 
 function selectMedia(id) {
@@ -370,6 +370,7 @@ window.addEventListener("dragleave", () => { if (--dragDepth <= 0) { dragDepth =
 window.addEventListener("dragover", (e) => e.preventDefault());
 window.addEventListener("drop", (e) => {
   e.preventDefault(); dragDepth = 0; $("dropHint").hidden = true;
+  if (e.dataTransfer.files.length > 1) { uploadBatch(e.dataTransfer.files); return; }
   const f = e.dataTransfer.files[0];
   if (!f) return;
   if (/\.(ttf|otf|ttc)$/i.test(f.name)) uploadFont(f); else upload(f);
@@ -428,7 +429,6 @@ function workflow(batch) {
   $("folderMode").classList.toggle("primary", batch);
   $("singleMode").setAttribute("aria-pressed", String(!batch));
   $("folderMode").setAttribute("aria-pressed", String(batch));
-  $("workflowHint").textContent = batch ? "Choose a folder, preview its first file, adjust the shared look, then export the folder." : "Choose a file, adjust its look, then export.";
 }
 $("singleMode").addEventListener("click", () => workflow(false));
 $("folderMode").addEventListener("click", () => workflow(true));
@@ -440,6 +440,7 @@ async function inspectFolder() {
     $("folderSummary").textContent = `${data.images} images + ${data.videos} videos. ` + (data.sample ? `Preview: ${data.sample.name}.` : "No readable preview found.");
     if (data.sample) { await loadMedia(); selectMedia(data.sample.id); }
     else selectMedia(null);
+    batchSource = "folder"; batchUploads = []; drawBatchSelection();
     saveBatch();
   } catch (e) { $("folderSummary").textContent = e.message; }
 }
@@ -456,10 +457,48 @@ $("chooseFolder").addEventListener("click", e => choosePath(e.currentTarget, "ba
 $("chooseOutput").addEventListener("click", e => choosePath(e.currentTarget, "batchOutput", "folder"));
 $("chooseCaptions").addEventListener("click", e => choosePath(e.currentTarget, "captionFile", "file"));
 
+let batchUploads = [];
+let batchSource = "uploads";
+let batchUploading = false;
+function drawBatchSelection() {
+  $("batchSelection").replaceChildren(...batchUploads.map(item => {
+    const row = document.createElement("li");
+    const preview = document.createElement("button"); preview.className = "ghost batch-name";
+    preview.textContent = item.name; preview.addEventListener("click", () => selectMedia(item.id));
+    const remove = document.createElement("button"); remove.textContent = "×";
+    remove.setAttribute("aria-label", "Remove " + item.name);
+    remove.addEventListener("click", () => { batchUploads = batchUploads.filter(i => i.id !== item.id); drawBatchSelection(); saveBatch(); });
+    row.append(preview, remove); return row;
+  }));
+  $("batchBtn").textContent = batchSource === "folder" ? "Export folder" : `Export batch${batchUploads.length ? " (" + batchUploads.length + ")" : ""}`;
+}
+async function uploadBatch(files) {
+  if (batchUploading) return;
+  workflow(true); batchSource = "uploads"; batchUploading = true; $("batchBtn").disabled = true;
+  $("batchFiles").disabled = $("batchUploadFolder").disabled = true;
+  const selected = Array.from(files).filter(f => /\.(png|jpe?g|webp|bmp|tiff?|mp4|mov|m4v|webm|mkv|avi|gif)$/i.test(f.name));
+  let failed = 0;
+  try {
+    for (const [i, file] of selected.entries()) {
+      $("batchUploadStatus").textContent = `Uploading ${i+1} / ${selected.length}`;
+      try {
+        const item = await api("/api/upload?name=" + encodeURIComponent(file.name), { method: "PUT", body: file,
+          headers: { "Content-Type": "application/octet-stream" } });
+        batchUploads.push(item); drawBatchSelection();
+      } catch (e) { failed++; $("batchStatus").textContent = file.name + ": " + e.message; }
+    }
+    await loadMedia(); if (batchUploads.length) selectMedia(batchUploads[0].id);
+    saveBatch();
+    $("batchUploadStatus").textContent = `${batchUploads.length} files` + (failed ? ` · ${failed} failed` : "");
+  } finally { batchUploading = false; $("batchBtn").disabled = false; $("batchFiles").disabled = $("batchUploadFolder").disabled = false; }
+}
+$("batchFiles").addEventListener("change", e => { uploadBatch(e.target.files); e.target.value = ""; });
+$("batchUploadFolder").addEventListener("change", e => { uploadBatch(e.target.files); e.target.value = ""; });
+
 // Folder batch state is separate from single-file previews and exports.
 let batchJob = null;
 function saveBatch() {
-  const data = { job: batchJob };
+  const data = { job: batchJob, uploads: batchUploads, source: batchSource };
   for (const id of ["batchFolder", "batchOutput", "captionMode", "captionFile"]) data[id] = $(id).value;
   localStorage.setItem(STORE + "/batch", JSON.stringify(data));
 }
@@ -471,10 +510,11 @@ async function watchBatch(id) {
       const j = await api("/api/jobs/" + id);
       $("batchBar").querySelector("span").style.width = Math.round(j.progress * 100) + "%";
       const successes = j.results.filter(r => !r.error).length;
-      $("batchStatus").textContent = `${j.state}: ${successes} saved, ${j.results.length - successes} failed / ${j.total}. ${j.destination}` + (j.error ? " — " + j.error : "");
+      $("batchStatus").textContent = `${successes} / ${j.total} exported${j.results.length - successes ? ", " + (j.results.length - successes) + " failed" : ""}` + (j.error ? " — " + j.error : "");
       $("batchResults").replaceChildren(...j.results.map(r => {
         const li = document.createElement("li");
-        li.textContent = r.error ? r.source + ": " + r.error : r.output;
+        li.textContent = r.error ? r.source.split(/[\\/]/).pop() + ": " + r.error : r.output.split(/[\\/]/).pop();
+        if (r.download) { const a = document.createElement("a"); a.href = r.download; a.textContent = "Download"; a.setAttribute("download", ""); li.appendChild(a); }
         return li;
       }));
       if (["done", "failed", "cancelled"].includes(j.state)) break;
@@ -489,7 +529,8 @@ async function watchBatch(id) {
 $("batchBtn").addEventListener("click", async () => {
   $("batchBtn").disabled = true;
   try {
-    const job = await api("/api/batch", { method: "POST", json: {
+    const job = await api(batchSource === "uploads" ? "/api/batch-uploads" : "/api/batch", { method: "POST", json: {
+      media_ids: batchUploads.map(i => i.id),
       settings, folder: $("batchFolder").value, output: $("batchOutput").value,
       caption_mode: $("captionMode").value, caption_file: $("captionFile").value
     }});
@@ -518,17 +559,22 @@ $("batchCancel").addEventListener("click", async () => {
     if (st.lan.length) $("lan").textContent = "Other devices: " + st.lan.join("  ");
     if (st.local) { $("quit").hidden = false; $("libraryBox").hidden = false; $("roots").value = (st.library_roots || []).join("\n"); }
     if (st.local) {
-      $("folderMode").hidden = false;
+      $("hostFolders").hidden = false;
+      $("captionOptions").hidden = false;
       $("captionFile").value = st.caption_file;
-      let batchSaved = {};
-      try { batchSaved = JSON.parse(localStorage.getItem(STORE + "/batch") || "{}"); } catch (_) {}
-      for (const id of ["batchFolder", "batchOutput", "captionMode", "captionFile"]) {
-        if (batchSaved[id]) $(id).value = batchSaved[id];
-      }
-      if (batchSaved.job) { workflow(true); watchBatch(batchSaved.job); }
     }
+    let batchSaved = {};
+    try { batchSaved = JSON.parse(localStorage.getItem(STORE + "/batch") || "{}"); } catch (_) {}
+    batchUploads = Array.isArray(batchSaved.uploads) ? batchSaved.uploads : [];
+    batchSource = st.local && batchSaved.source === "folder" ? "folder" : "uploads";
+    for (const id of ["batchFolder", "batchOutput", "captionMode", "captionFile"]) {
+      if (batchSaved[id]) $(id).value = batchSaved[id];
+    }
+    drawBatchSelection();
+    if (batchSaved.job) { workflow(true); watchBatch(batchSaved.job); }
     buildForm(); fillForm(); drawPresets();
     await loadMedia();
+    batchUploads = batchUploads.filter(i => mediaItems.some(m => m.id === i.id)); drawBatchSelection();
     if (mediaId && !mediaItems.some((m) => m.id === mediaId)) mediaId = null;
     drawMedia(); await refreshPlan(); renderPreview(); loadExports();
   } catch (e) { status("Could not start: " + e.message, true); }

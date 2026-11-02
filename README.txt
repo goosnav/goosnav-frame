@@ -1,4 +1,4 @@
-Goosnav Frame 0.2.0
+Goosnav Frame 0.2.1
 
 Frames an image or video into an ad: a capital Helvetica title above, the
 media in the middle, an underlined Times link below. Edit the text and
@@ -9,7 +9,7 @@ OPEN THE APPLICATION
 Extract the complete ZIP. Keep every launcher beside the `app` folder.
 
 - macOS: double-click "Start Goosnav Frame.command" in this folder.
-  The header should show 0.2.0. Keep the Terminal window open while working.
+  The header should show 0.2.1. Keep the Terminal window open while working.
 - Windows x64: double-click "Open Goosnav Frame — Windows x64.exe".
 - Linux x86_64: double-click "Open Goosnav Frame — Linux x86_64.AppImage".
 - Linux ARM64: double-click "Open Goosnav Frame — Linux ARM64.AppImage".
@@ -66,9 +66,8 @@ reinstall on the next launch; your uploads and exports are not affected.
 
 SINGLE FILE OR FOLDER BATCH
 --------------------------
-Use the buttons at the top of the panel. Single image / video opens a file
-picker. Folder batch offers Choose folder on macOS, or a path field and
-Load path. It shows a sample and counts before export. Batch output defaults
+Use the buttons at the top of the panel. Single opens a file picker. Batch offers Choose files and Upload folder.
+Use a local folder offers a macOS chooser, or a path field and Load path. It shows a sample and counts before export. Batch output defaults
 to a Goosnav Exports subfolder; you can choose a different directory.
 
 Media look has early-3D dither, web GIF, CRT, handheld and zine presets.

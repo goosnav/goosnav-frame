@@ -35,12 +35,11 @@
 
   <aside class="panel">
     <nav class="workflow" aria-label="Export workflow">
-      <button id="singleMode" class="primary" aria-pressed="true">Single image / video</button>
-      <button id="folderMode" aria-pressed="false" hidden>Folder batch</button>
+      <button id="singleMode" class="primary" aria-pressed="true">Single</button>
+      <button id="folderMode" aria-pressed="false">Batch</button>
     </nav>
-    <p id="workflowHint" class="muted small">Choose a file, adjust its look, then export.</p>
     <details open id="singleMedia">
-      <summary>1. Choose media</summary>
+      <summary>Media</summary>
       <div class="row">
         <label class="button primary">Choose image or video
           <input type="file" id="file" accept="image/*,video/*" hidden>
@@ -57,18 +56,26 @@
     </details>
 
     <details id="batchBox" open hidden>
-      <summary>1. Choose a folder</summary>
-      <p class="muted small">One ad per image or video directly in this folder. Photos export as PNG; videos as MP4. Uses the current layout, title and link settings.</p>
+      <summary>Batch</summary>
+      <div class="row">
+        <label class="button primary">Choose files<input id="batchFiles" type="file" multiple accept="image/*,video/*" hidden></label>
+        <label class="button">Upload folder<input id="batchUploadFolder" type="file" webkitdirectory multiple hidden></label>
+      </div>
+      <ul id="batchSelection" class="exports"></ul>
+      <p id="batchUploadStatus" role="status"></p>
+      <details id="hostFolders" hidden><summary>Use a local folder</summary>
       <div class="row"><button id="chooseFolder" class="primary">Choose folder…</button><button id="inspectFolder">Load path</button></div>
       <p id="folderSummary" class="muted small"></p>
       <label>Source folder<input id="batchFolder" type="text" placeholder="/path/to/media"></label>
       <div class="row"><button id="chooseOutput">Choose output folder…</button></div>
-      <label>Output folder (optional)<input id="batchOutput" type="text" placeholder="Defaults to Goosnav Exports inside the source folder"></label>
-      <label>Top caption<select id="captionMode"><option value="fixed">Same title for every ad</option><option value="random">Random line from text file</option></select></label>
+      <label>Output folder (optional)<input id="batchOutput" type="text" placeholder="Goosnav Exports"></label>
+      </details>
+      <label>Top caption<select id="captionMode"><option value="fixed">Same title</option><option value="random">Random phrasebook line</option></select></label>
+      <details id="captionOptions" hidden><summary>Caption file</summary>
       <div class="row"><button id="chooseCaptions">Choose caption file…</button></div>
       <label>Caption text file<input id="captionFile" type="text"></label>
-      <p class="muted small">One caption per nonblank line. Long captions wrap automatically. Filenames use the caption plus date and timestamp.</p>
-      <div class="row"><button id="batchBtn" class="primary">Export folder</button><button id="batchCancel" hidden>Cancel batch</button></div>
+      </details>
+      <div class="row"><button id="batchBtn" class="primary">Export batch</button><button id="batchCancel" hidden>Cancel</button></div>
       <p id="batchStatus" role="status"></p>
       <div id="batchBar" class="bar" hidden><span></span></div>
       <ul id="batchResults" class="exports"></ul>
@@ -76,7 +83,6 @@
 
     <details open>
       <summary>Media look</summary>
-      <p class="muted small">Full-resolution exports with deliberately crunchy pixels and palettes. Applies to every photo and video in a batch; captions stay crisp.</p>
       <div id="f-mediafx" class="fields"></div>
     </details>
 
@@ -127,11 +133,11 @@
     </details>
 
     <details open id="singleExport">
-      <summary>Export selected media</summary>
+      <summary>Export</summary>
       <div id="f-export" class="fields"></div>
       <p id="planInfo" class="muted small"></p>
       <div class="row">
-        <button id="exportBtn" class="primary">Export selected file</button>
+        <button id="exportBtn" class="primary">Export</button>
         <button id="cancelBtn" class="ghost" hidden>Cancel</button>
       </div>
       <div id="exportBar" class="bar" hidden><span></span></div>

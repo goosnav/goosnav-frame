@@ -2,7 +2,7 @@
 from pathlib import Path
 import hashlib
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 APP_ID = "com.goosnav.frame"
 
 def _build_id():

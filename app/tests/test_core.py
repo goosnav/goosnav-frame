@@ -445,3 +445,28 @@ def test_manual_title_breaks_do_not_create_orphan_words():
     settings = S.normalize({})
     rows = R.layout(settings)['title']['rows']
     assert [r['text'] for r in rows] == ['TWEAKING OFF THE', 'GOOSNAV PACK']
+
+
+def test_uploaded_batch_downloads_work_without_host_access(server, still, monkeypatch):
+    from goosnav_frame.server import Handler
+    base, app = server
+    item = app.save_upload('test.png', io.BytesIO(still.read_bytes()), still.stat().st_size)
+    monkeypatch.setattr(Handler, '_local', lambda self: False)
+    code, body, _ = _req(base + '/api/batch-uploads', 'POST', json.dumps({
+        'media_ids': [item['id']], 'caption_mode': 'random'
+    }).encode(), {'X-Frame-Token': 'tok'})
+    assert code == 200, body
+    job = wait_job(app.job(json.loads(body)['id']))
+    assert job.state == 'done', job.error
+    download = job.results[0]['download']
+    code, body, _ = _req(base + download)
+    assert code == 200 and Image.open(io.BytesIO(body)).size == (1080,1350)
+    assert _req(base + '/api/batch', 'POST', b'{}', {'X-Frame-Token': 'tok'})[0] == 403
+
+
+def test_uploaded_batch_rejects_invalid_selection(server):
+    from goosnav_frame.services import ServiceError
+    _, app = server
+    for ids in ([], ['lib-deadbeef'], [None], 'wrong'):
+        with pytest.raises(ServiceError):
+            app.start_batch({}, '', media_ids=ids)

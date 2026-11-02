@@ -363,15 +363,23 @@ class App:
         return job
 
     def start_batch(self, settings: dict, folder: str, output: str = "",
-                    caption_mode: str = "fixed", caption_file: str = "") -> Job:
-        source = Path(folder).expanduser().resolve() if folder.strip() else None
-        if source is None or not source.is_dir():
-            raise ServiceError(400, "BAD_FOLDER", "Enter an existing source folder")
-        destination = Path(output).expanduser().resolve() if output.strip() else source / "Goosnav Exports"
-        if destination == source:
-            raise ServiceError(400, "BAD_OUTPUT", "Choose a subfolder or a separate output folder")
-        files = sorted(p for p in source.iterdir() if p.is_file() and not p.name.startswith(".")
-                       and p.suffix.lower() in M.MEDIA_EXT)
+                    caption_mode: str = "fixed", caption_file: str = "", media_ids: list | None = None) -> Job:
+        if media_ids is not None:
+            if not isinstance(media_ids, list) or not 1 <= len(media_ids) <= 500:
+                raise ServiceError(400, "BAD_BATCH", "Select 1–500 files")
+            if any(not isinstance(mid, str) or not mid.startswith("up-") for mid in media_ids):
+                raise ServiceError(400, "BAD_BATCH", "Select uploaded files")
+            files = [self.resolve(mid) for mid in dict.fromkeys(media_ids)]
+            destination = self.exports
+        else:
+            source = Path(folder).expanduser().resolve() if folder.strip() else None
+            if source is None or not source.is_dir():
+                raise ServiceError(400, "BAD_FOLDER", "Enter an existing source folder")
+            destination = Path(output).expanduser().resolve() if output.strip() else source / "Goosnav Exports"
+            if destination == source:
+                raise ServiceError(400, "BAD_OUTPUT", "Choose a subfolder or a separate output folder")
+            files = sorted(p for p in source.iterdir() if p.is_file() and not p.name.startswith(".")
+                           and p.suffix.lower() in M.MEDIA_EXT)
         if not files:
             raise ServiceError(400, "EMPTY_FOLDER", "No supported images or videos in that folder")
         captions = []
@@ -416,7 +424,7 @@ class App:
                             else:
                                 X.export_mp4(item, str(path), out, cancel=job.cancel,
                                     progress=lambda f: setattr(job, "progress", (i + f) / len(files)))
-                            job.results.append({"source": str(path), "caption": caption, "border_color": item["media"]["border_color"] if item["media"]["border_enabled"] else None, "output": str(out), "error": ""})
+                            job.results.append({"source": str(path), "caption": caption, "border_color": item["media"]["border_color"] if item["media"]["border_enabled"] else None, "output": str(out), "download": "/api/exports/" + out.name if destination == self.exports else "", "error": ""})
                         except X.Cancelled:
                             if out:
                                 out.unlink(missing_ok=True)

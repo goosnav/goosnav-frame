@@ -245,6 +245,11 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(app.inspect_folder(str(body.get("folder") or "")))
                 from .picker import choose_path
                 return self._json({"path": choose_path(str(body.get("kind") or "folder"))})
+            if path == "/api/batch-uploads":
+                return self._json(app.start_batch(body.get("settings") or {}, "",
+                    caption_mode=str(body.get("caption_mode") or "fixed"),
+                    caption_file=str(body.get("caption_file") or "") if self._local() else "",
+                    media_ids=body.get("media_ids", [])).public())
             if path == "/api/batch":
                 if not self._local():
                     raise ServiceError(403, "LOCAL_ONLY", "Run folder batches on the host computer")
