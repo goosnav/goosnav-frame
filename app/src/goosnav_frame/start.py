@@ -26,6 +26,7 @@ import webbrowser
 from pathlib import Path
 
 from .server import Server, lan_addresses
+from . import APP_ID, BUILD_ID, __version__
 from .services import App
 
 DATA_NAME = "GoosnavFrame"
@@ -70,8 +71,9 @@ def _can_open_browser() -> bool:
 def _already_running(port: int) -> bool:
     try:
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/health/ready", timeout=1.5) as r:
-            return r.status == 200 and b"version" in r.read(200)
-    except OSError:
+            state = json.load(r)
+            return isinstance(state, dict) and state.get("app_id") == APP_ID and state.get("build") == BUILD_ID
+    except (OSError, ValueError):
         return False
 
 
@@ -90,10 +92,18 @@ def main(argv: list[str] | None = None) -> int:
     supervised = bool(os.environ.get("GOOSNAV_RUNTIME_STATE"))
 
     preferred = int(os.environ.get("GOOSNAV_PORT_PREFERENCE") or DEFAULT_PORT) or DEFAULT_PORT
-    if not supervised and _already_running(preferred):
-        url = f"http://127.0.0.1:{preferred}"
+    manual_state = _app_data() / "manual-server.json"
+    previous_port = preferred
+    if not args.port:
+        try:
+            previous_port = int(json.loads(manual_state.read_text())["port"])
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+    reusable = next((p for p in dict.fromkeys((previous_port, preferred)) if _already_running(p)), None)
+    if not supervised and reusable:
+        url = f"http://127.0.0.1:{reusable}"
         print(f"Goosnav Frame is already running: {url}", flush=True)
-        for lan_url in lan_addresses(preferred):
+        for lan_url in lan_addresses(reusable) if not args.local else []:
             print(f"  on your network: {lan_url}", flush=True)
         if want_browser:
             webbrowser.open(url)
@@ -114,9 +124,16 @@ def main(argv: list[str] | None = None) -> int:
     server = _bind(host, port, app, secrets.token_urlsafe(24), lan)
     bound = server.server_address[1]
     _write_state(bound)
+    if not supervised:
+        manual_state.parent.mkdir(parents=True, exist_ok=True)
+        temporary_state = manual_state.with_suffix(".tmp")
+        temporary_state.write_text(json.dumps({"port": bound, "build": BUILD_ID}))
+        os.replace(temporary_state, manual_state)
+    if bound != preferred:
+        print(f"Port {preferred} is occupied; opening this updated copy on port {bound}.", flush=True)
 
     local = f"http://127.0.0.1:{bound}"
-    print(f"Goosnav Frame is running: {local}", flush=True)
+    print(f"Goosnav Frame {__version__} is running: {local}", flush=True)
     for url in lan_addresses(bound) if lan else []:
         print(f"  on your network: {url}", flush=True)
 

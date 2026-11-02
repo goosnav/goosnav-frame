@@ -41,13 +41,36 @@ def layout(s: dict) -> dict:
     top_edge = 0
     if s["title"]["visible"] and s["title"]["text"].strip():
         ts = s["title"]
-        lines = title_lines(s)
         size = ts["size"]
+        avail = W - 2 * side - 2 * ts["outline"]
+        def wrapped(size):
+            font = fonts.get(ts["font"], size)
+            rows = []
+            for paragraph in title_lines(s):
+                line = ""
+                for word in paragraph.split():
+                    candidate = (line + " " + word).strip()
+                    if line and _line_width(font, candidate, ts["letter_spacing"]) > avail:
+                        rows.append(line)
+                        line = word
+                    else:
+                        line = candidate
+                rows.append(line)
+            return rows
+        if ts["autofit"] and "\n" in ts["text"]:
+            # Honor deliberate line breaks before introducing additional wrapped rows.
+            while size > 8 and max(_line_width(fonts.get(ts["font"], size), ln, ts["letter_spacing"])
+                                   for ln in title_lines(s)) > avail:
+                size -= 1
+        lines = wrapped(size)
         if ts["autofit"]:
-            avail = W - 2 * side
-            widest = max(_line_width(fonts.get(ts["font"], size), ln, ts["letter_spacing"]) for ln in lines)
-            if widest > avail:
-                size = max(8, int(size * avail / widest))
+            while size > 8:
+                font = fonts.get(ts["font"], size)
+                if (max(_line_width(font, ln, ts["letter_spacing"]) for ln in lines) <= avail
+                        and len(lines) * size * ts["line_height"] <= H * 0.25):
+                    break
+                size -= 1
+                lines = wrapped(size)
         font = fonts.get(ts["font"], size)
         cap = -font.getbbox("H", anchor="ls")[1]
         lh = size * ts["line_height"]
@@ -89,6 +112,8 @@ def layout(s: dict) -> dict:
 def media_rect(s: dict, lay: dict, mw: int, mh: int) -> tuple[int, int, int, int]:
     """Where the media lands on the canvas: (x, y, w, h); may extend past the box."""
     bx0, by0, bx1, by1 = lay["box"]
+    border = min(s["media"]["border"], (bx1-bx0)//4, (by1-by0)//4) if s["media"]["border_enabled"] else 0
+    bx0, by0, bx1, by1 = bx0+border, by0+border, bx1-border, by1-border
     bw, bh = bx1 - bx0, by1 - by0
     fit = s["media"]["fit"]
     if fit == "stretch":
@@ -210,23 +235,39 @@ def media_fx(arr: np.ndarray, s: dict) -> np.ndarray:
     if mode == "none":
         return arr
     h, w = arr.shape[:2]
-    if mode in ("ps1", "pixelate") and fx["pixel"] > 1:
+    if mode in ("ps1", "pixelate", "web216", "crt", "handheld", "zine") and fx["pixel"] > 1:
         p = fx["pixel"]
         small = Image.fromarray(arr).resize((max(1, w // p), max(1, h // p)), Image.BOX)
         a = np.asarray(small, dtype=np.float32) / 255.0
     else:
         p = 1
         a = arr.astype(np.float32) / 255.0
-    if mode == "ps1":
-        hh, ww = a.shape[:2]
-        thr = np.tile(BAYER4, (hh // 4 + 1, ww // 4 + 1))[:hh, :ww][..., None]
-        a = np.clip(np.floor(a * 31 + thr) / 31, 0, 1)
+    hh, ww = a.shape[:2]
+    thr = np.tile(BAYER4, (hh // 4 + 1, ww // 4 + 1))[:hh, :ww][..., None]
+    if mode in ("ps1", "web216"):
+        levels = fx["levels"] - 1 if mode == "ps1" else 5
+        a = np.clip(np.floor(a * levels + thr) / levels, 0, 1)
+    elif mode in ("handheld", "zine"):
+        luminance = a @ np.array([.299, .587, .114], dtype=np.float32)
+        index = np.clip(np.floor(luminance * 3 + thr[..., 0]), 0, 3).astype(int)
+        palette = (np.array([[15, 56, 15], [48, 98, 48], [139, 172, 15], [155, 188, 15]])
+                   if mode == "handheld" else np.array([[22, 20, 28], [99, 94, 109], [190, 182, 185], [255, 246, 224]]))
+        a = palette[index] / 255.0
+    elif mode == "crt":
+        # Fixed phosphor stripes and scanlines: deterministic, with no video flicker.
+        a = np.clip((a - .5) * 1.08 + .5, 0, 1)
+        a[1::2] *= .78
+        a[:, 1:, 0] = a[:, :-1, 0]
+        a[:, :-1, 2] = a[:, 1:, 2]
     elif mode == "posterize":
         lv = fx["levels"] - 1
         a = np.round(a * lv) / lv
     out = (a * 255 + 0.5).astype(np.uint8)
     if p > 1:
         out = np.asarray(Image.fromarray(out).resize((w, h), Image.NEAREST))
+    strength = fx["strength"] / 100
+    if strength < 1:
+        out = np.clip(out.astype(np.float32) * strength + arr * (1-strength) + .5, 0, 255).astype(np.uint8)
     return out
 
 
@@ -278,7 +319,13 @@ def compose(s: dict, lay: dict, frame: np.ndarray | None, t: float = 0.0, index:
     canvas = np.empty((H, W, 3), np.uint8)
     canvas[:] = hex_rgb(s["canvas"]["background"])
     if frame is not None:
-        place_media(canvas, frame, media_rect(s, lay, frame.shape[1], frame.shape[0]), s)
+        rect = media_rect(s, lay, frame.shape[1], frame.shape[0])
+        x, y, w, h = rect
+        border = s["media"]["border"] if s["media"]["border_enabled"] else 0
+        if border:
+            canvas[max(0, y-border):max(0, min(H, y+h+border)),
+                   max(0, x-border):max(0, min(W, x+w+border))] = hex_rgb(s["media"]["border_color"])
+        place_media(canvas, frame, rect, s)
     if layer is None:
         layer = text_layer(s, lay, t, index)
     out = composite_text(canvas, layer, s)

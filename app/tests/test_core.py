@@ -50,8 +50,8 @@ def test_custom_canvas_is_even():
 
 
 # ------------------------------------------------------------------ layout / render
-def test_overlay_is_default_and_media_fills_frame():
-    s = S.normalize({})
+def test_overlay_remains_available_and_media_fills_frame():
+    s = S.normalize({"canvas": {"layout": "overlay"}, "media": {"fit": "cover", "border": 0}})
     lay = R.layout(s)
     assert s["canvas"]["layout"] == "overlay" and lay["box"] == (0, 0, 1080, 1350)
     green = np.zeros((500, 400, 3), np.uint8)
@@ -239,3 +239,209 @@ def test_http_rejects_bad_ids_and_traversal(server):
     assert _req(base + "/api/exports/config.json")[0] == 400
     code, _, _ = _req(base + "/api/upload?name=evil.sh", "PUT", b"#!/bin/sh", {"X-Frame-Token": "tok"})
     assert code == 415
+
+
+def wait_job(job):
+    import time
+    deadline = time.monotonic() + 60
+    while job.state not in ("done", "failed", "cancelled") and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert job.state in ("done", "failed", "cancelled"), job.public()
+    return job
+
+
+def test_photo_defaults_center_between_text_and_wrap():
+    s = S.normalize({"title": {"text": "ALL OF THIS CAN BE YOURS"}})
+    lay = R.layout(s)
+    assert len(lay["title"]["rows"]) > 1
+    x, y, w, h = R.media_rect(s, lay, 1000, 1000)
+    assert w == h and abs(x - (1080-w)/2) <= 0.5
+    assert lay["title"]["bottom"] < y < y+h < lay["link"]["top"]
+    assert x > 0
+    for row in lay["title"]["rows"]:
+        assert row["width"] <= 1080 - 2 * lay["side"]
+
+
+def test_single_photo_auto_exports_png_http(server, still):
+    base, app = server
+    code, body, _ = _req(base + "/api/upload?name=photo.png", "PUT", still.read_bytes(), {"X-Frame-Token": "tok"})
+    mid = json.loads(body)["id"]
+    code, body, _ = _req(base + "/api/export", "POST", json.dumps({"media_id": mid,
+        "settings": {"title": {"text": "Hello / world!"}}}).encode(), {"X-Frame-Token": "tok"})
+    job = wait_job(app.job(json.loads(body)["id"]))
+    assert job.state == "done", job.error
+    assert job.output.startswith("Hello-world_") and job.output.endswith(".png")
+    code, body, headers = _req(base + "/api/exports/" + job.output)
+    assert code == 200 and headers["Content-Type"] == "image/png"
+    assert Image.open(io.BytesIO(body)).size == (1080, 1350)
+
+
+def test_mixed_batch_random_and_custom_destination(server, still, clip, tmp_path):
+    import shutil
+    base, app = server
+    source = tmp_path / "source"
+    source.mkdir()
+    shutil.copy(still, source / "one.png")
+    shutil.copy(still, source / "two.png")
+    shutil.copy(clip, source / "clip.mp4")
+    captions = tmp_path / "captions.txt"
+    captions.write_text("\ufeffHello world\n\nAnother caption\n", encoding="utf-8")
+    dest = tmp_path / "output"
+    job = wait_job(app.start_batch({"media": {"trim_duration": 0.2}}, str(source), str(dest), "random", str(captions)))
+    assert job.state == "done", job.public()
+    assert len(job.results) == 3
+    outputs = [Path(r["output"]) for r in job.results]
+    assert len(set(outputs)) == 3 and all(p.is_file() and p.parent == dest for p in outputs)
+    assert sorted(p.suffix for p in outputs) == [".mp4", ".png", ".png"]
+    assert all(r["caption"] in ("Hello world", "Another caption") for r in job.results)
+    assert M.probe(next(p for p in outputs if p.suffix == ".mp4")).has_audio
+
+
+def test_batch_default_folder_failures_and_repeat(server, still, tmp_path):
+    import shutil
+    _, app = server
+    source = tmp_path / "source"
+    source.mkdir()
+    shutil.copy(still, source / "one.png")
+    (source / "bad.png").write_text("invalid image")
+    for _ in range(2):
+        job = wait_job(app.start_batch({"title": {"text": "Same caption"}}, str(source)))
+        assert job.state == "failed" and job.total == 2
+        assert sum(bool(r["output"]) for r in job.results) == 1
+        assert all(r["caption"] == "Same caption" for r in job.results)
+    assert len(list((source / "Goosnav Exports").glob("*.png"))) == 2
+
+
+def test_batch_validates_captions_and_can_cancel(server, still, tmp_path):
+    import shutil
+    from goosnav_frame.services import ServiceError
+    _, app = server
+    source = tmp_path / "source"
+    source.mkdir()
+    shutil.copy(still, source / "one.png")
+    empty = tmp_path / "empty.txt"
+    empty.write_text(" \n")
+    with pytest.raises(ServiceError):
+        app.start_batch({}, str(source), caption_mode="random", caption_file=str(empty))
+    with app.queue_lock:
+        job = app.start_batch({}, str(source))
+        job.cancel.set()
+    assert wait_job(job).state == "cancelled"
+    assert not list((source / "Goosnav Exports").glob("*.png"))
+
+
+def test_optional_random_border_matches_preview_and_export(server, still):
+    from goosnav_frame.services import PRIMARY_COLORS
+    _, app = server
+    item = app.save_upload('test.png', io.BytesIO(still.read_bytes()), still.stat().st_size)
+    settings = {"media": {"border_enabled": True, "border_random": True, "border": 20}}
+    preview = np.asarray(Image.open(io.BytesIO(app.preview_png(settings, item['id'], 0))))
+    job = wait_job(app.start_export(settings, item['id']))
+    exported = np.asarray(Image.open(app.export_path(job.output)))
+    assert np.array_equal(preview, exported)
+    s = app._border_settings(S.normalize(settings), item['id'])
+    assert s['media']['border_color'] in PRIMARY_COLORS
+    x, y, w, h = R.media_rect(s, R.layout(s), 400, 300)
+    assert tuple(exported[y-10, x+w//2]) == S.hex_rgb(s['media']['border_color'])
+    without = S.normalize({})
+    assert not without['media']['border_enabled']
+
+
+def test_batch_random_border_uses_primary_palette(server, still, tmp_path):
+    import shutil
+    from goosnav_frame.services import PRIMARY_COLORS
+    _, app = server
+    source = tmp_path / 'source'
+    source.mkdir()
+    for i in range(3):
+        shutil.copy(still, source / f'{i}.png')
+    job = wait_job(app.start_batch({'media': {'border_enabled': True, 'border_random': True}}, str(source)))
+    assert job.state == 'done'
+    assert all(r['border_color'] in PRIMARY_COLORS for r in job.results)
+
+
+@pytest.mark.parametrize('color', ['red', 'blue', 'yellow', '#009b24', '#ae31bd'])
+@pytest.mark.parametrize('padding', [0, 40, 90])
+def test_detects_colored_frames_with_white_padding(color, padding):
+    from PIL import ImageDraw
+    from goosnav_frame.core.borders import has_colored_frame
+    image = Image.new('RGB', (500, 500), 'white')
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((padding, padding, 499-padding, 499-padding), outline=color, width=12)
+    draw.ellipse((180, 180, 320, 320), fill='black')
+    assert has_colored_frame(np.asarray(image))
+
+
+def test_border_detector_rejects_corners_and_solid_images():
+    from PIL import ImageDraw
+    from goosnav_frame.core.borders import has_colored_frame
+    assert not has_colored_frame(np.full((400, 400, 3), (255, 0, 0), dtype=np.uint8))
+    image = Image.new('RGB', (400, 400), 'white')
+    draw = ImageDraw.Draw(image)
+    for x, y in [(0,0), (350,0), (0,350), (350,350)]:
+        draw.rectangle((x,y,x+49,y+49), fill='blue')
+    assert not has_colored_frame(np.asarray(image))
+
+
+def test_auto_skip_can_be_overridden(tmp_path):
+    from PIL import ImageDraw
+    image = Image.new('RGB', (400,400), 'white')
+    ImageDraw.Draw(image).rectangle((30,30,370,370), outline='green', width=12)
+    path = tmp_path / 'framed.png'
+    image.save(path)
+    plain = X.render_still(S.normalize({}), str(path), 0)
+    skip = X.render_still(S.normalize({'media': {'border_enabled': True}}), str(path), 0)
+    forced = X.render_still(S.normalize({'media': {'border_enabled': True, 'border_auto_skip': False}}), str(path), 0)
+    assert np.array_equal(plain, skip)
+    assert not np.array_equal(skip, forced)
+
+
+@pytest.mark.parametrize('mode', ['ps1', 'web216', 'crt', 'handheld', 'zine', 'pixelate', 'posterize'])
+def test_retro_looks_are_deterministic_and_preserve_dimensions(mode):
+    rng = np.random.default_rng(18)
+    photo = rng.integers(0, 256, (123, 157, 3), dtype=np.uint8)
+    settings = S.normalize({'media_fx': {'mode': mode, 'pixel': 3}})
+    result = R.media_fx(photo, settings)
+    assert result.shape == photo.shape and result.dtype == np.uint8
+    assert np.array_equal(result, R.media_fx(photo, settings))
+    assert not np.array_equal(photo, result)
+    settings['media_fx']['strength'] = 0
+    assert np.array_equal(photo, R.media_fx(photo, settings))
+    if mode in ('handheld', 'zine'):
+        assert len(np.unique(result.reshape(-1, 3), axis=0)) <= 4
+    if mode == 'web216':
+        assert len(np.unique(result.reshape(-1, 3), axis=0)) <= 216
+
+
+def test_folder_inspection_registers_preview_and_ignores_exports(server, still, tmp_path):
+    import shutil
+    base, app = server
+    folder = tmp_path / 'folder'
+    folder.mkdir()
+    shutil.copy(still, folder / 'first.png')
+    exports = folder / 'Goosnav Exports'
+    exports.mkdir()
+    shutil.copy(still, exports / 'prior.png')
+    code, body, _ = _req(base + '/api/folder', 'POST', json.dumps({'folder': str(folder)}).encode(), {'X-Frame-Token': 'tok'})
+    data = json.loads(body)
+    assert code == 200 and data['count'] == data['images'] == 1
+    assert data['sample']['name'] == 'first.png'
+    assert app.resolve(data['sample']['id']) == folder / 'first.png'
+    assert any(i['id'] == data['sample']['id'] for i in app.list_media())
+
+
+def test_launcher_only_reuses_current_build(server, monkeypatch):
+    from goosnav_frame.start import _already_running
+    from goosnav_frame import BUILD_ID, APP_ID
+    base, app = server
+    assert _already_running(int(base.rsplit(':', 1)[1]))
+    def old(*args, **kwargs):
+        return io.BytesIO(json.dumps({'ok': True, 'version': '0.1.0'}).encode())
+    monkeypatch.setattr('urllib.request.urlopen', old)
+    assert not _already_running(8787)
+
+
+def test_manual_title_breaks_do_not_create_orphan_words():
+    settings = S.normalize({})
+    rows = R.layout(settings)['title']['rows']
+    assert [r['text'] for r in rows] == ['TWEAKING OFF THE', 'GOOSNAV PACK']

@@ -18,11 +18,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
 
-from . import __version__
+from . import __version__, APP_ID, BUILD_ID
 from .core import fonts
 from .core.media import MediaError
 from .core import settings as S
-from .services import App, ServiceError
+from .services import App, ServiceError, DEFAULT_CAPTIONS
 
 STATIC = Path(__file__).resolve().parents[2] / "static"
 MAX_JSON = 2 * 1024 * 1024
@@ -191,7 +191,7 @@ class Handler(BaseHTTPRequestHandler):
                                   {"Content-Security-Policy": "default-src 'self'; img-src 'self' blob: data:; "
                                    "media-src 'self' blob:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'"})
             if path == "/health/ready":
-                return self._json({"ok": True, "version": __version__})
+                return self._json({"ok": True, "version": __version__, "app_id": APP_ID, "build": BUILD_ID})
             if path.startswith("/static/"):
                 rel = Path(path[len("/static/"):])
                 target = (STATIC / rel).resolve()
@@ -203,6 +203,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({
                     "version": __version__, "defaults": S.defaults(), "presets_builtin": list(S.CANVAS_PRESETS),
                     "fonts": fonts.listing(), "presets": app.presets(), "exports": app.list_exports(),
+                    "caption_file": str(DEFAULT_CAPTIONS) if self._local() else None,
                     "local": self._local(), "lan": lan_addresses(port) if self.server.lan else [],
                     "library_roots": app.config["library_roots"] if self._local() else None,
                 })
@@ -237,6 +238,19 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, png, "image/png")
             if path == "/api/plan":
                 return self._json(app.plan(body.get("settings") or {}, body.get("media_id")))
+            if path in ("/api/folder", "/api/choose-path"):
+                if not self._local():
+                    raise ServiceError(403, "LOCAL_ONLY", "Choose folders on the host computer")
+                if path == "/api/folder":
+                    return self._json(app.inspect_folder(str(body.get("folder") or "")))
+                from .picker import choose_path
+                return self._json({"path": choose_path(str(body.get("kind") or "folder"))})
+            if path == "/api/batch":
+                if not self._local():
+                    raise ServiceError(403, "LOCAL_ONLY", "Run folder batches on the host computer")
+                return self._json(app.start_batch(body.get("settings") or {}, str(body.get("folder") or ""),
+                    str(body.get("output") or ""), str(body.get("caption_mode") or "fixed"),
+                    str(body.get("caption_file") or "")).public())
             if path == "/api/export":
                 job = app.start_export(body.get("settings") or {}, body.get("media_id"), bool(body.get("quick")))
                 return self._json(job.public())

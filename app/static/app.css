@@ -85,3 +85,12 @@ button:disabled { opacity: .45; cursor: default; }
   #lan { font-size: 12px; }
   .field { grid-template-columns: 104px 1fr; }
 }
+
+#batchBox > label { display: block; margin: 10px 0; }
+#batchBox > label input, #batchBox > label select { display: block; width: 100%; margin-top: 4px; }
+#batchResults { max-height: 240px; overflow: auto; }
+#batchResults li, #batchStatus { overflow-wrap: anywhere; }
+
+.workflow { display: flex; gap: 6px; position: sticky; top: -4px; background: white; z-index: 3; padding: 10px 0; }
+.workflow button { flex: 1; }
+.top h1 small { color: var(--muted); font-size: 11px; font-weight: normal; }

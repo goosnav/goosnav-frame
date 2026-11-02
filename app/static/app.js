@@ -61,6 +61,11 @@ const FIELDS = {
     ["media.scale", "range", "Scale %", 10, 300, 1],
     ["media.offset_x", "range", "Move left/right", -800, 800, 1],
     ["media.offset_y", "range", "Move up/down", -800, 800, 1],
+    ["media.border_enabled", "check", "Add image border"],
+    ["media.border_auto_skip", "check", "Skip existing colored frames"],
+    ["media.border_random", "check", "Random primary colour"],
+    ["media.border", "range", "Border width", 0, 80, 1],
+    ["media.border_color", "color", "Border colour"],
     ["media.gap", "range", "Gap to text (stacked)", 0, 300, 1],
     ["media.scaling", "select", "Resampling", [["auto", "Auto"], ["crisp", "Crisp pixels"], ["smooth", "Smooth"]]],
     ["media.trim_start", "number", "Start at (s)", 0, 36000, 0.1],
@@ -69,7 +74,8 @@ const FIELDS = {
     ["media.keep_audio", "check", "Keep audio"],
   ],
   "f-mediafx": [
-    ["media_fx.mode", "select", "Effect", [["none", "None"], ["ps1", "PS1 dither"], ["pixelate", "Pixelate"], ["posterize", "Posterize"]]],
+    ["media_fx.mode", "select", "Effect", [["none", "Original — no effect"], ["ps1", "Early 3D — crunchy dither"], ["web216", "1996 web GIF — 216 colors"], ["crt", "CRT — phosphor scanlines"], ["handheld", "Handheld — 4 green tones"], ["zine", "Photocopied zine — ink & paper"], ["pixelate", "Clean pixel art"], ["posterize", "Poster color"]]],
+    ["media_fx.strength", "range", "Effect strength %", 0, 100, 1],
     ["media_fx.pixel", "range", "Pixel size", 1, 12, 1],
     ["media_fx.levels", "range", "Colour levels", 2, 64, 1],
   ],
@@ -81,7 +87,7 @@ const FIELDS = {
     ["canvas.side_margin", "range", "Side margin", 0, 400, 1],
   ],
   "f-export": [
-    ["export.format", "select", "Format", [["mp4", "MP4 video"], ["png", "PNG still (current time)"]]],
+    ["export.format", "select", "Format", [["auto", "Automatic (photo PNG / video MP4)"], ["mp4", "MP4 video"], ["png", "PNG still (current time)"]]],
     ["export.quality", "select", "Quality", [["high", "High"], ["medium", "Medium"], ["small", "Small file"]]],
     ["export.fps", "number", "Frame rate (0 = source)", 0, 60, 1],
   ],
@@ -119,7 +125,7 @@ async function api(path, opts = {}) {
 }
 
 function status(msg, err = false) {
-  const el = $("status"); el.textContent = msg || ""; el.classList.toggle("err", !!err);
+  const el = $("status"); el.textContent = msg || ""; el.classList.toggle("err", !!err); delete el.dataset.src;
 }
 
 // ------------------------------------------------------------------ form
@@ -176,13 +182,14 @@ const PRESETS = { "4:5": [1080, 1350], "1:1": [1080, 1080], "9:16": [1080, 1920]
 
 function onField(path, value) {
   set(settings, path, value);
+  if (path === "media.border_random" && value) { settings.media.border_enabled = true; fillForm(); }
   if (path === "canvas.preset" && PRESETS[value]) { settings.canvas.width = PRESETS[value][0]; settings.canvas.height = PRESETS[value][1]; fillForm(); }
   if (path === "canvas.preset") fillForm();
-  if (path.startsWith("media.trim") || path === "media.image_duration" || path === "export.fps") refreshPlan();
+  if (path.startsWith("media.trim") || path === "media.image_duration" || path === "export.fps" || path === "export.format") refreshPlan();
   save(); schedulePreview();
 }
 
-function save() { localStorage.setItem(STORE, JSON.stringify({ settings, mediaId })); }
+function save() { localStorage.setItem(STORE, JSON.stringify({ settings, mediaId, imageDefaults: true })); }
 
 // ------------------------------------------------------------------ preview
 let pvTimer = null, pvBusy = false, pvAgain = false, pvUrl = null;
@@ -198,7 +205,7 @@ async function renderPreview() {
     if (pvUrl) URL.revokeObjectURL(pvUrl);
     pvUrl = URL.createObjectURL(blob);
     $("preview").src = pvUrl;
-    if (!$("status").classList.contains("err") || $("status").dataset.src === "preview") status("");
+    if ($("status").dataset.src === "preview") status("");
   } catch (e) {
     status("Preview failed: " + e.message, true); $("status").dataset.src = "preview";
   } finally {
@@ -215,7 +222,8 @@ async function refreshPlan() {
     $("tlabel").textContent = (+t.value).toFixed(2) + " s";
     const item = mediaItems.find((m) => m.id === mediaId);
     const what = !item ? "No media: text only" : item.info.kind === "image" ? "Image" : "Video";
-    $("planInfo").textContent = `${what} · MP4 will be ${plan.duration.toFixed(2)} s at ${+plan.fps.toFixed(2)} fps (${plan.frames} frames), ${settings.canvas.width}×${settings.canvas.height}`;
+    const png = settings.export.format === "png" || (settings.export.format === "auto" && (!item || item.info.kind === "image"));
+    $("planInfo").textContent = png ? `${what} · PNG image, ${settings.canvas.width}×${settings.canvas.height}` : `${what} · MP4 will be ${plan.duration.toFixed(2)} s at ${+plan.fps.toFixed(2)} fps (${plan.frames} frames), ${settings.canvas.width}×${settings.canvas.height}`;
   } catch (e) { status(e.message, true); }
 }
 
@@ -230,7 +238,7 @@ async function runJob(quick, bar, onDone) {
       try {
         const j = await api("/api/jobs/" + job.id);
         fill.style.width = Math.round(j.progress * 100) + "%";
-        if (j.state === "done") { bar.hidden = true; onDone(j); resolve(j); return; }
+        if (j.state === "done") { bar.hidden = true; await onDone(j); resolve(j); return; }
         if (j.state === "failed") { bar.hidden = true; reject(new Error(j.error || "Render failed")); return; }
         if (j.state === "cancelled") { bar.hidden = true; reject(new Error("Cancelled")); return; }
         setTimeout(tick, 400);
@@ -412,6 +420,86 @@ $("rootsSave").addEventListener("click", async () => {
   $("roots").value = res.roots.join("\n"); await loadMedia(true); status("Library folders saved (" + res.roots.length + ")");
 });
 
+function workflow(batch) {
+  $("singleMedia").hidden = batch;
+  $("singleExport").hidden = batch;
+  $("batchBox").hidden = !batch;
+  $("singleMode").classList.toggle("primary", !batch);
+  $("folderMode").classList.toggle("primary", batch);
+  $("singleMode").setAttribute("aria-pressed", String(!batch));
+  $("folderMode").setAttribute("aria-pressed", String(batch));
+  $("workflowHint").textContent = batch ? "Choose a folder, preview its first file, adjust the shared look, then export the folder." : "Choose a file, adjust its look, then export.";
+}
+$("singleMode").addEventListener("click", () => workflow(false));
+$("folderMode").addEventListener("click", () => workflow(true));
+async function inspectFolder() {
+  $("folderSummary").textContent = "Reading folder…";
+  try {
+    const data = await api("/api/folder", { method: "POST", json: { folder: $("batchFolder").value } });
+    $("batchFolder").value = data.folder;
+    $("folderSummary").textContent = `${data.images} images + ${data.videos} videos. ` + (data.sample ? `Preview: ${data.sample.name}.` : "No readable preview found.");
+    if (data.sample) { await loadMedia(); selectMedia(data.sample.id); }
+    else selectMedia(null);
+    saveBatch();
+  } catch (e) { $("folderSummary").textContent = e.message; }
+}
+$("inspectFolder").addEventListener("click", inspectFolder);
+async function choosePath(button, field, kind, inspect = false) {
+  button.disabled = true;
+  try {
+    const result = await api("/api/choose-path", { method: "POST", json: { kind } });
+    if (result.path) { $(field).value = result.path; saveBatch(); if (inspect) await inspectFolder(); }
+  } catch (e) { $("folderSummary").textContent = e.message; }
+  finally { button.disabled = false; }
+}
+$("chooseFolder").addEventListener("click", e => choosePath(e.currentTarget, "batchFolder", "folder", true));
+$("chooseOutput").addEventListener("click", e => choosePath(e.currentTarget, "batchOutput", "folder"));
+$("chooseCaptions").addEventListener("click", e => choosePath(e.currentTarget, "captionFile", "file"));
+
+// Folder batch state is separate from single-file previews and exports.
+let batchJob = null;
+function saveBatch() {
+  const data = { job: batchJob };
+  for (const id of ["batchFolder", "batchOutput", "captionMode", "captionFile"]) data[id] = $(id).value;
+  localStorage.setItem(STORE + "/batch", JSON.stringify(data));
+}
+async function watchBatch(id) {
+  batchJob = id; saveBatch();
+  $("batchBtn").disabled = true; $("batchCancel").hidden = false; $("batchBar").hidden = false;
+  try {
+    while (true) {
+      const j = await api("/api/jobs/" + id);
+      $("batchBar").querySelector("span").style.width = Math.round(j.progress * 100) + "%";
+      const successes = j.results.filter(r => !r.error).length;
+      $("batchStatus").textContent = `${j.state}: ${successes} saved, ${j.results.length - successes} failed / ${j.total}. ${j.destination}` + (j.error ? " — " + j.error : "");
+      $("batchResults").replaceChildren(...j.results.map(r => {
+        const li = document.createElement("li");
+        li.textContent = r.error ? r.source + ": " + r.error : r.output;
+        return li;
+      }));
+      if (["done", "failed", "cancelled"].includes(j.state)) break;
+      await new Promise(resolve => setTimeout(resolve, 600));
+    }
+  } catch (e) { $("batchStatus").textContent = e.message; }
+  finally {
+    batchJob = null; saveBatch(); $("batchBtn").disabled = false;
+    $("batchCancel").hidden = true; $("batchBar").hidden = true;
+  }
+}
+$("batchBtn").addEventListener("click", async () => {
+  $("batchBtn").disabled = true;
+  try {
+    const job = await api("/api/batch", { method: "POST", json: {
+      settings, folder: $("batchFolder").value, output: $("batchOutput").value,
+      caption_mode: $("captionMode").value, caption_file: $("captionFile").value
+    }});
+    await watchBatch(job.id);
+  } catch (e) { $("batchStatus").textContent = e.message; $("batchBtn").disabled = false; }
+});
+$("batchCancel").addEventListener("click", async () => {
+  if (batchJob) await api("/api/jobs/" + batchJob + "/cancel", { method: "POST", json: {} });
+});
+
 // ------------------------------------------------------------------ boot
 (async function boot() {
   try {
@@ -419,9 +507,26 @@ $("rootsSave").addEventListener("click", async () => {
     DEFAULTS = st.defaults; FONTS = st.fonts; PRESET_DATA = st.presets;
     let saved = {}; try { saved = JSON.parse(localStorage.getItem(STORE) || "{}"); } catch (e) { saved = {}; }
     settings = merge(DEFAULTS, saved.settings || {});
+    if (!saved.imageDefaults) {
+      settings.canvas.layout = "stacked";
+      settings.media.fit = "contain";
+      settings.media.scale = 100;
+      settings.media.offset_x = settings.media.offset_y = 0;
+      settings.export.format = "auto";
+    }
     mediaId = saved.mediaId || null;
     if (st.lan.length) $("lan").textContent = "Other devices: " + st.lan.join("  ");
     if (st.local) { $("quit").hidden = false; $("libraryBox").hidden = false; $("roots").value = (st.library_roots || []).join("\n"); }
+    if (st.local) {
+      $("folderMode").hidden = false;
+      $("captionFile").value = st.caption_file;
+      let batchSaved = {};
+      try { batchSaved = JSON.parse(localStorage.getItem(STORE + "/batch") || "{}"); } catch (_) {}
+      for (const id of ["batchFolder", "batchOutput", "captionMode", "captionFile"]) {
+        if (batchSaved[id]) $(id).value = batchSaved[id];
+      }
+      if (batchSaved.job) { workflow(true); watchBatch(batchSaved.job); }
+    }
     buildForm(); fillForm(); drawPresets();
     await loadMedia();
     if (mediaId && !mediaItems.some((m) => m.id === mediaId)) mediaId = null;

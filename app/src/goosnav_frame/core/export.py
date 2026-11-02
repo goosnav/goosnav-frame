@@ -11,6 +11,7 @@ import numpy as np
 from PIL import Image
 
 from . import media as M
+from . import borders
 from .render import compose, layout, text_layer
 from .settings import is_animated
 
@@ -39,13 +40,17 @@ def plan(s: dict, info: M.Info | None) -> dict:
 
 
 def render_still(s: dict, path: str | None, t: float) -> np.ndarray:
-    lay = layout(s)
     frame = None
     if path:
         info = M.probe(path)
         tt = t + (s["media"]["trim_start"] if info.kind == "video" else 0)
         frame = M.frame_at(path, tt)
-    return compose(s, lay, frame, t, int(t * 24))
+    detection_frame = frame
+    if (path and info.kind == "video" and s["media"]["border_enabled"]
+            and s["media"]["border_auto_skip"]):
+        detection_frame = M.frame_at(path, plan(s, info)["start"])
+    s = borders.prepare(s, detection_frame)
+    return compose(s, layout(s), frame, t, int(t * 24))
 
 
 def export_png(s: dict, path: str | None, out: Path) -> Path:
@@ -57,6 +62,8 @@ def export_mp4(s: dict, path: str | None, out: Path, progress: Callable[[float],
                cancel: threading.Event | None = None, half: bool = False) -> Path:
     info = M.probe(path) if path else None
     pl = plan(s, info)
+    if path and s["media"]["border_enabled"] and s["media"]["border_auto_skip"]:
+        s = borders.prepare(s, M.frame_at(path, pl["start"]))
     lay = layout(s)
     W, H = lay["W"], lay["H"]
     ow, oh = (W // 4 * 2, H // 4 * 2) if half else (W, H)

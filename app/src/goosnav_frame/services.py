@@ -4,6 +4,9 @@ The HTTP layer calls only this module; it holds no rendering logic itself.
 """
 from __future__ import annotations
 
+import copy
+import random
+from datetime import datetime
 import hashlib
 import json
 import os
@@ -23,6 +26,15 @@ from .core import settings as S
 
 ID_RE = re.compile(r"^(up|lib)-[a-f0-9]{8,40}$")
 EXPORT_RE = re.compile(r"^[A-Za-z0-9_.-]{1,120}\.(mp4|png)$")
+PRIMARY_COLORS = ("#ff0000", "#0000ff", "#ffff00")
+
+DEFAULT_CAPTIONS = Path(__file__).resolve().parents[2] / "captions" / "Goosnav_Phrasebook_Curated.txt"
+
+def export_name(caption: str, fmt: str) -> str:
+    base = re.sub(r"[^A-Za-z0-9_-]+", "-", caption).strip("-")[:80] or "ad"
+    return f"{base}_{datetime.now().astimezone():%Y%m%d-%H%M%S-%f}.{fmt}"
+
+
 MAX_UPLOAD = 4 * 1024**3
 MAX_FONT = 30 * 1024**2
 
@@ -42,11 +54,15 @@ class Job:
     progress: float = 0.0
     error: str = ""
     output: str = ""
+    results: list = field(default_factory=list)
+    total: int = 0
+    destination: str = ""
     started: float = field(default_factory=time.time)
     cancel: threading.Event = field(default_factory=threading.Event)
 
     def public(self) -> dict:
         return {"id": self.id, "kind": self.kind, "name": self.name, "state": self.state,
+                "results": list(self.results), "total": self.total, "destination": self.destination,
                 "progress": round(self.progress, 4), "error": self.error, "output": self.output}
 
 
@@ -65,8 +81,10 @@ class App:
         self.lock = threading.RLock()
         self.config = self._load_config(default_roots or [])
         self.jobs: dict[str, Job] = {}
+        self.border_colors = {}
         self.queue_lock = threading.Lock()  # one render at a time
         self._library: dict[str, Path] = {}
+        self._selected: dict[str, Path] = {}
         self._library_at = 0.0
 
     # ------------------------------------------------------------ config
@@ -80,6 +98,11 @@ class App:
                 cfg["presets"] = {str(k)[:60]: S.normalize(v) for k, v in raw["presets"].items()}
         except (OSError, ValueError, AttributeError):
             pass
+        cfg["presets"].setdefault("Reference ad", S.normalize({
+            "title": {"text": "ALL OF THIS\nCAN BE YOURS"},
+            "retro": {"enabled": True, "pixel": 3, "shadow": True},
+            "media": {"border_enabled": True},
+        }))
         return cfg
 
     def _save_config(self) -> None:
@@ -119,7 +142,7 @@ class App:
             if hits:
                 return hits[0]
         else:
-            p = self._scan_library().get(media_id) or self._scan_library(force=True).get(media_id)
+            p = self._selected.get(media_id) or self._scan_library().get(media_id) or self._scan_library(force=True).get(media_id)
             if p and p.is_file():
                 return p
         raise ServiceError(404, "NO_MEDIA", "That media is no longer available")
@@ -149,7 +172,30 @@ class App:
             it = self._item(mid, p, "library")
             if it:
                 items.append(it)
+        known = {item["id"] for item in items}
+        for mid, p in list(self._selected.items()):
+            if mid not in known and p.is_file():
+                item = self._item(mid, p, "folder")
+                if item:
+                    items.append(item)
         return items
+
+    def inspect_folder(self, folder: str) -> dict:
+        source = Path(folder).expanduser().resolve() if folder.strip() else None
+        if source is None or not source.is_dir():
+            raise ServiceError(400, "BAD_FOLDER", "Choose an existing source folder")
+        paths = sorted(p for p in source.iterdir() if p.is_file() and not p.name.startswith(".")
+                       and p.suffix.lower() in M.MEDIA_EXT)
+        sample = None
+        for path in paths[:30]:
+            mid = "lib-" + hashlib.sha1(str(path).encode()).hexdigest()[:16]
+            sample = self._item(mid, path, "folder")
+            if sample:
+                self._selected[mid] = path
+                break
+        return {"folder": str(source), "count": len(paths), "sample": sample,
+                "images": sum(p.suffix.lower() in M.IMAGE_EXT for p in paths),
+                "videos": sum(p.suffix.lower() in M.VIDEO_EXT for p in paths)}
 
     def save_upload(self, filename: str, stream, length: int) -> dict:
         ext = Path(filename).suffix.lower()
@@ -246,11 +292,23 @@ class App:
         return clean
 
     # ------------------------------------------------------------ render
+    def _border_settings(self, s: dict, media_id: str | None) -> dict:
+        # Keep the preview and export identical; never randomize individual video frames.
+        if s["media"]["border_enabled"] and s["media"]["border_random"]:
+            key = (media_id, s["title"]["text"])
+            with self.lock:
+                if key not in self.border_colors:
+                    if len(self.border_colors) >= 1000:
+                        self.border_colors.clear()
+                    self.border_colors[key] = random.choice(PRIMARY_COLORS)
+                s["media"]["border_color"] = self.border_colors[key]
+        return s
+
     def preview_png(self, settings: dict, media_id: str | None, t: float) -> bytes:
         import io
 
         from PIL import Image
-        s = S.normalize(settings)
+        s = self._border_settings(S.normalize(settings), media_id)
         path = self.resolve(media_id)
         arr = X.render_still(s, str(path) if path else None, max(0.0, float(t)))
         buf = io.BytesIO()
@@ -258,22 +316,20 @@ class App:
         return buf.getvalue()
 
     def plan(self, settings: dict, media_id: str | None) -> dict:
-        s = S.normalize(settings)
+        s = self._border_settings(S.normalize(settings), media_id)
         path = self.resolve(media_id)
         return X.plan(s, M.probe(path) if path else None)
 
     def start_export(self, settings: dict, media_id: str | None, quick: bool = False) -> Job:
-        s = S.normalize(settings)
+        s = self._border_settings(S.normalize(settings), media_id)
         path = self.resolve(media_id)
         fmt = "mp4" if quick else s["export"]["format"]
-        base = "frame"
-        if path:
-            base = re.sub(r"[^A-Za-z0-9_-]+", "-", Path(path).stem).strip("-")[:40] or "frame"
-        stamp = time.strftime("%Y%m%d-%H%M%S")
-        name = f"{base}_{stamp}{'_preview' if quick else ''}.{fmt}"
+        if fmt == "auto":
+            fmt = "mp4" if path and M.probe(path).kind == "video" else "png"
+        name = export_name(s["title"]["text"], fmt)
         job = Job(id=secrets.token_hex(8), kind="preview" if quick else "export", name=name)
         self.jobs[job.id] = job
-        for old in sorted(self.jobs.values(), key=lambda j: j.started)[:-40]:
+        for old in sorted((j for j in self.jobs.values() if j.state in ("done", "failed", "cancelled")), key=lambda j: j.started)[:-40]:
             self.jobs.pop(old.id, None)
 
         def run():
@@ -283,8 +339,8 @@ class App:
                     return
                 job.state = "running"
                 out = (self.data / "previews" if quick else self.exports) / name
-                out.parent.mkdir(parents=True, exist_ok=True)
                 try:
+                    out.parent.mkdir(parents=True, exist_ok=True)
                     if fmt == "png":
                         X.export_png(s, str(path) if path else None, out)
                     else:
@@ -304,6 +360,85 @@ class App:
                     traceback.print_exc()
 
         threading.Thread(target=run, daemon=True, name="render-" + job.id).start()
+        return job
+
+    def start_batch(self, settings: dict, folder: str, output: str = "",
+                    caption_mode: str = "fixed", caption_file: str = "") -> Job:
+        source = Path(folder).expanduser().resolve() if folder.strip() else None
+        if source is None or not source.is_dir():
+            raise ServiceError(400, "BAD_FOLDER", "Enter an existing source folder")
+        destination = Path(output).expanduser().resolve() if output.strip() else source / "Goosnav Exports"
+        if destination == source:
+            raise ServiceError(400, "BAD_OUTPUT", "Choose a subfolder or a separate output folder")
+        files = sorted(p for p in source.iterdir() if p.is_file() and not p.name.startswith(".")
+                       and p.suffix.lower() in M.MEDIA_EXT)
+        if not files:
+            raise ServiceError(400, "EMPTY_FOLDER", "No supported images or videos in that folder")
+        captions = []
+        if caption_mode not in ("fixed", "random"):
+            raise ServiceError(400, "BAD_CAPTIONS", "Choose fixed or random captions")
+        if caption_mode == "random":
+            try:
+                captions = [line.strip() for line in Path(caption_file or DEFAULT_CAPTIONS).expanduser()
+                            .read_text(encoding="utf-8-sig").splitlines() if line.strip()]
+            except (OSError, UnicodeError) as exc:
+                raise ServiceError(400, "BAD_CAPTIONS", f"Could not read caption file: {exc}") from exc
+            if not captions or any(len(line) > 400 for line in captions):
+                raise ServiceError(400, "BAD_CAPTIONS", "Use nonblank captions of at most 400 characters per line")
+        s = S.normalize(settings)
+        job = Job(id=secrets.token_hex(8), kind="batch", name="Folder batch",
+                  total=len(files), destination=str(destination))
+        self.jobs[job.id] = job
+
+        def run():
+            with self.queue_lock:
+                try:
+                    if job.cancel.is_set():
+                        raise X.Cancelled()
+                    destination.mkdir(parents=True, exist_ok=True)
+                    job.state = "running"
+                    for i, path in enumerate(files):
+                        if job.cancel.is_set():
+                            raise X.Cancelled()
+                        item = copy.deepcopy(s)
+                        if captions:
+                            item["title"]["text"] = random.choice(captions)
+                        if item["media"]["border_enabled"] and item["media"]["border_random"]:
+                            item["media"]["border_color"] = random.choice(PRIMARY_COLORS)
+                        caption = item["title"]["text"]
+                        out = None
+                        try:
+                            info = M.probe(path)
+                            fmt = "png" if info.kind == "image" else "mp4"
+                            out = destination / export_name(caption, fmt)
+                            if fmt == "png":
+                                X.export_png(item, str(path), out)
+                            else:
+                                X.export_mp4(item, str(path), out, cancel=job.cancel,
+                                    progress=lambda f: setattr(job, "progress", (i + f) / len(files)))
+                            job.results.append({"source": str(path), "caption": caption, "border_color": item["media"]["border_color"] if item["media"]["border_enabled"] else None, "output": str(out), "error": ""})
+                        except X.Cancelled:
+                            if out:
+                                out.unlink(missing_ok=True)
+                            raise
+                        except Exception as exc:
+                            if out:
+                                out.unlink(missing_ok=True)
+                            job.results.append({"source": str(path), "caption": caption, "output": "", "error": str(exc)})
+                        job.progress = (i + 1) / len(files)
+                    failures = sum(bool(r["error"]) for r in job.results)
+                    job.state = "done" if not failures else "failed"
+                    job.error = f"{failures} of {len(files)} files failed; see results" if failures else ""
+                except X.Cancelled:
+                    job.state = "cancelled"
+                except Exception as exc:
+                    job.state, job.error = "failed", str(exc)
+                finally:
+                    if destination.is_dir():
+                        report = destination / ("batch-" + job.id + ".json")
+                        report.write_text(json.dumps(job.public(), indent=2), encoding="utf-8")
+
+        threading.Thread(target=run, daemon=True, name="batch-" + job.id).start()
         return job
 
     def _prune_previews(self) -> None:

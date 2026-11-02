@@ -33,6 +33,12 @@ if [ -x "$UV" ]; then
   [ "$WANT" = "$HAVE" ] || { echo "The bundled setup tool is damaged: $UV" >&2; exit 1; }
 elif command -v uv >/dev/null 2>&1; then
   UV=$(command -v uv)
+elif [ -x /opt/homebrew/bin/uv ]; then
+  UV=/opt/homebrew/bin/uv
+elif [ -x /usr/local/bin/uv ]; then
+  UV=/usr/local/bin/uv
+elif [ -x "$HOME/.local/bin/uv" ]; then
+  UV="$HOME/.local/bin/uv"
 else
   echo "No setup tool found. Extract the complete ZIP so app/launcher/tools is present." >&2; exit 1
 fi
@@ -43,7 +49,7 @@ export UV_PYTHON_INSTALL_DIR="$DATA/python"
 export UV_CACHE_DIR="$DATA/cache/uv"
 
 echo "Preparing Goosnav Frame (first run downloads about 100 MB)..."
-"$UV" sync --project "$APP" --locked --no-dev --managed-python --quiet
+"$UV" sync --project "$APP" --locked --no-dev --managed-python
 
 unset PYTHONPATH
 export GOOSNAV_APP_ROOT="$APP" GOOSNAV_APP_DATA="$DATA" GOOSNAV_DATA_DIR="$DATA/data" GOOSNAV_CONFIG_DIR="$DATA/config"

@@ -18,7 +18,7 @@ CANVAS_PRESETS = {
 
 DEFAULTS: dict = {
     "canvas": {"preset": "4:5", "width": 1080, "height": 1350, "background": "#ffffff", "side_margin": 60,
-               "layout": "overlay"},
+               "layout": "stacked"},
     "title": {
         "visible": True,
         "text": "TWEAKING OFF THE\nGOOSNAV PACK",
@@ -46,11 +46,16 @@ DEFAULTS: dict = {
         "outline_color": "#ffffff",
     },
     "media": {
-        "fit": "cover",
+        "fit": "contain",
         "scale": 100,
         "offset_x": 0,
         "offset_y": 0,
         "gap": 36,
+        "border": 20,
+        "border_enabled": False,
+        "border_auto_skip": True,
+        "border_random": False,
+        "border_color": "#009b24",
         "scaling": "auto",
         "trim_start": 0.0,
         "trim_duration": 0.0,
@@ -72,8 +77,8 @@ DEFAULTS: dict = {
         "type_delay": 0.2,
         "cursor": True,
     },
-    "media_fx": {"mode": "none", "pixel": 3, "levels": 32},
-    "export": {"format": "mp4", "fps": 0, "quality": "high", "time": 0.0},
+    "media_fx": {"mode": "none", "pixel": 3, "levels": 32, "strength": 100},
+    "export": {"format": "auto", "fps": 0, "quality": "high", "time": 0.0},
 }
 
 # path -> (kind, constraint)
@@ -111,6 +116,11 @@ SCHEMA: dict = {
     "media.scale": ("int", (5, 400)),
     "media.offset_x": ("int", (-4000, 4000)),
     "media.offset_y": ("int", (-4000, 4000)),
+    "media.border_auto_skip": ("bool", None),
+    "media.border_enabled": ("bool", None),
+    "media.border_random": ("bool", None),
+    "media.border": ("int", (0, 80)),
+    "media.border_color": ("color", None),
     "media.gap": ("int", (0, 1000)),
     "media.scaling": ("enum", ["auto", "crisp", "smooth"]),
     "media.trim_start": ("float", (0.0, 36000.0)),
@@ -130,10 +140,11 @@ SCHEMA: dict = {
     "retro.type_speed": ("float", (1.0, 200.0)),
     "retro.type_delay": ("float", (0.0, 30.0)),
     "retro.cursor": ("bool", None),
-    "media_fx.mode": ("enum", ["none", "ps1", "pixelate", "posterize"]),
+    "media_fx.mode": ("enum", ["none", "ps1", "pixelate", "posterize", "web216", "crt", "handheld", "zine"]),
+    "media_fx.strength": ("int", (0, 100)),
     "media_fx.pixel": ("int", (1, 16)),
     "media_fx.levels": ("int", (2, 64)),
-    "export.format": ("enum", ["mp4", "png"]),
+    "export.format": ("enum", ["auto", "mp4", "png"]),
     "export.fps": ("int", (0, 60)),
     "export.quality": ("enum", ["high", "medium", "small"]),
     "export.time": ("float", (0.0, 36000.0)),
