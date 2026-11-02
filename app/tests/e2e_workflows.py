@@ -40,18 +40,30 @@ with sync_playwright() as p:
     expect(page.locator('#batchBox')).to_be_visible()
     expect(page.locator('#singleExport')).not_to_be_visible()
     page.route('**/api/choose-path', lambda route: route.fulfill(json={'path': str(source)}))
-    page.locator('#hostFolders summary').click()
     page.locator('#chooseFolder').click()
     expect(page.locator('#folderSummary')).to_contain_text('Preview:', timeout=30000)
     page.unroute('**/api/choose-path')
     page.locator('#batchOutput').fill(str(output))
     page.locator('#captionMode').select_option('random')
+    assert page.locator('#batchExport').evaluate("el => !!(el.compareDocumentPosition(document.querySelector('#f-media')) & Node.DOCUMENT_POSITION_PRECEDING)")
+    downloads = []
+    page.on('download', lambda d: downloads.append(d))
     page.locator('#batchBtn').click()
     count = sum(p.suffix.lower() in ('.png', '.jpg', '.mp4') for p in source.iterdir())
     expect(page.locator('#batchStatus')).to_contain_text(f'{count} / {count} exported', timeout=60000)
-    assert list(output.glob('*.png'))
+    expect(page.locator('#batchSavedTo')).to_contain_text(str(output))
+    assert not downloads
+    assert page.locator('#batchResults a').count() == 0
+    assert list(output.glob('goosnav_frame_*/*.png'))
     if any(p.suffix == '.mp4' for p in source.iterdir()):
-        assert list(output.glob('*.mp4'))
+        assert list(output.glob('goosnav_frame_*/*.mp4'))
+    page.locator('#batchOutput').fill('')
+    page.locator('#batchBtn').click()
+    expect(page.locator('#batchSavedTo')).to_contain_text(str(source) + '/goosnav_frame_', timeout=60000)
+    expect(page.locator('#batchStatus')).to_contain_text(f'{count} / {count} exported', timeout=60000)
+    runs = list(source.glob('goosnav_frame_*'))
+    assert runs and any(len(list(run.glob('*.png'))) + len(list(run.glob('*.mp4'))) == count for run in runs)
+    assert not downloads
     page.screenshot(path=str(screenshots / 'batch.png'))
     page.set_viewport_size({'width': 900, 'height': 760})
     page.screenshot(path=str(screenshots / 'laptop.png'))

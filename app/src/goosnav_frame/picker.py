@@ -20,3 +20,13 @@ def choose_path(kind: str) -> str:
             return ""
         raise ServiceError(400, "PICKER_FAILED", "Could not open the chooser; paste a path instead")
     return result.stdout.strip()
+
+
+def open_folder(path: str) -> None:
+    import os
+    if sys.platform == "darwin":
+        subprocess.Popen(["open", path])
+    elif sys.platform == "win32":
+        os.startfile(path)
+    else:
+        subprocess.Popen(["xdg-open", path])

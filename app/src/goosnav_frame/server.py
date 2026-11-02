@@ -203,7 +203,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({
                     "version": __version__, "defaults": S.defaults(), "presets_builtin": list(S.CANVAS_PRESETS),
                     "fonts": fonts.listing(), "presets": app.presets(), "exports": app.list_exports(),
+                    "export_directory": str(app.exports) if self._local() else None,
                     "caption_file": str(DEFAULT_CAPTIONS) if self._local() else None,
+                    "workspace": app.workspace(self._local()),
                     "local": self._local(), "lan": lan_addresses(port) if self.server.lan else [],
                     "library_roots": app.config["library_roots"] if self._local() else None,
                 })
@@ -212,6 +214,10 @@ class Handler(BaseHTTPRequestHandler):
             m = re.match(r"^/api/media/([\w-]+)/thumb$", path)
             if m:
                 return self._file(app.thumb(m.group(1)), "image/jpeg", cache=True)
+            m = re.match(r"^/api/jobs/([a-f0-9]+)/files/([^/]+)$", path)
+            if m:
+                file = app.batch_file(m.group(1), m.group(2))
+                return self._file(file, download=file.name)
             m = re.match(r"^/api/jobs/(\w+)$", path)
             if m:
                 return self._json(app.job(m.group(1)).public())
@@ -233,6 +239,9 @@ class Handler(BaseHTTPRequestHandler):
 
         if method == "POST":
             body = self._body_json()
+            if path == "/api/workspace":
+                app.save_workspace(body, local=self._local())
+                return self._json({"ok": True})
             if path == "/api/preview":
                 png = app.preview_png(body.get("settings") or {}, body.get("media_id"), float(body.get("t") or 0))
                 return self._send(200, png, "image/png")
@@ -247,6 +256,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"path": choose_path(str(body.get("kind") or "folder"))})
             if path == "/api/batch-uploads":
                 return self._json(app.start_batch(body.get("settings") or {}, "",
+                    output=str(body.get("output") or "") if self._local() else "",
                     caption_mode=str(body.get("caption_mode") or "fixed"),
                     caption_file=str(body.get("caption_file") or "") if self._local() else "",
                     media_ids=body.get("media_ids", [])).public())
@@ -256,6 +266,16 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(app.start_batch(body.get("settings") or {}, str(body.get("folder") or ""),
                     str(body.get("output") or ""), str(body.get("caption_mode") or "fixed"),
                     str(body.get("caption_file") or "")).public())
+            m = re.match(r"^/api/jobs/([a-f0-9]+)/open-folder$", path)
+            if m:
+                if not self._local():
+                    raise ServiceError(403, "LOCAL_ONLY", "Open folders on the host computer")
+                job = app.job(m.group(1))
+                if job.kind != "batch" or not job.destination or not Path(job.destination).is_dir():
+                    raise ServiceError(404, "NO_FOLDER", "The export folder is not available")
+                from .picker import open_folder
+                open_folder(job.destination)
+                return self._json({"ok": True})
             if path == "/api/export":
                 job = app.start_export(body.get("settings") or {}, body.get("media_id"), bool(body.get("quick")))
                 return self._json(job.public())

@@ -1,6 +1,6 @@
 [project]
 name = "goosnav-frame"
-version = "0.2.1"
+version = "0.2.2"
 description = "Frame images and videos into 4:5 Goosnav ads with a title and a link."
 requires-python = "==3.12.10"
 dependencies = [

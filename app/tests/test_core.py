@@ -291,7 +291,7 @@ def test_mixed_batch_random_and_custom_destination(server, still, clip, tmp_path
     assert job.state == "done", job.public()
     assert len(job.results) == 3
     outputs = [Path(r["output"]) for r in job.results]
-    assert len(set(outputs)) == 3 and all(p.is_file() and p.parent == dest for p in outputs)
+    assert len(set(outputs)) == 3 and all(p.is_file() and p.parent.parent == dest for p in outputs)
     assert sorted(p.suffix for p in outputs) == [".mp4", ".png", ".png"]
     assert all(r["caption"] in ("Hello world", "Another caption") for r in job.results)
     assert M.probe(next(p for p in outputs if p.suffix == ".mp4")).has_audio
@@ -309,7 +309,7 @@ def test_batch_default_folder_failures_and_repeat(server, still, tmp_path):
         assert job.state == "failed" and job.total == 2
         assert sum(bool(r["output"]) for r in job.results) == 1
         assert all(r["caption"] == "Same caption" for r in job.results)
-    assert len(list((source / "Goosnav Exports").glob("*.png"))) == 2
+    assert len(list(source.glob("goosnav_frame_*/*.png"))) == 2
 
 
 def test_batch_validates_captions_and_can_cancel(server, still, tmp_path):
@@ -327,7 +327,7 @@ def test_batch_validates_captions_and_can_cancel(server, still, tmp_path):
         job = app.start_batch({}, str(source))
         job.cancel.set()
     assert wait_job(job).state == "cancelled"
-    assert not list((source / "Goosnav Exports").glob("*.png"))
+    assert not list(source.glob("goosnav_frame_*/*.png"))
 
 
 def test_optional_random_border_matches_preview_and_export(server, still):
@@ -470,3 +470,98 @@ def test_uploaded_batch_rejects_invalid_selection(server):
     for ids in ([], ['lib-deadbeef'], [None], 'wrong'):
         with pytest.raises(ServiceError):
             app.start_batch({}, '', media_ids=ids)
+
+
+def test_uploaded_batch_saves_all_files_in_its_own_subfolder(server, still, clip):
+    _, app = server
+    items = [app.save_upload(p.name, io.BytesIO(p.read_bytes()), p.stat().st_size) for p in (still, clip)]
+    job = wait_job(app.start_batch({'media': {'trim_duration': .2}}, '', media_ids=[i['id'] for i in items]))
+    assert job.state == 'done', job.public()
+    destination = Path(job.destination)
+    assert destination.parent == app.exports and destination.is_dir()
+    assert {p.suffix for p in destination.iterdir() if p.suffix != '.json'} == {'.png', '.mp4'}
+    assert all(Path(r['output']).parent == destination and Path(r['output']).is_file() for r in job.results)
+
+
+def test_uploaded_batch_honors_save_folder_and_open_folder(server, still, tmp_path, monkeypatch):
+    base, app = server
+    item = app.save_upload('still.png', io.BytesIO(still.read_bytes()), still.stat().st_size)
+    destination = tmp_path / 'chosen export folder'
+    code, body, _ = _req(base + '/api/batch-uploads', 'POST', json.dumps({
+        'media_ids': [item['id']], 'output': str(destination)
+    }).encode(), {'X-Frame-Token': 'tok'})
+    assert code == 200
+    job = wait_job(app.job(json.loads(body)['id']))
+    assert job.state == 'done' and Path(job.destination).parent == destination
+    assert len(list(destination.rglob('*.png'))) == 1
+    opened = []
+    monkeypatch.setattr('goosnav_frame.picker.open_folder', opened.append)
+    code, _, _ = _req(base + f'/api/jobs/{job.id}/open-folder', 'POST', b'{}', {'X-Frame-Token': 'tok'})
+    assert code == 200 and opened == [job.destination]
+
+
+def test_remote_batch_cannot_select_host_output_folder(server, still, tmp_path, monkeypatch):
+    from goosnav_frame.server import Handler
+    base, app = server
+    item = app.save_upload('still.png', io.BytesIO(still.read_bytes()), still.stat().st_size)
+    destination = tmp_path / 'must-not-write'
+    monkeypatch.setattr(Handler, '_local', lambda self: False)
+    code, body, _ = _req(base + '/api/batch-uploads', 'POST', json.dumps({
+        'media_ids': [item['id']], 'output': str(destination)
+    }).encode(), {'X-Frame-Token': 'tok'})
+    job = wait_job(app.job(json.loads(body)['id']))
+    assert code == 200 and job.state == 'done'
+    assert Path(job.destination).parent == app.exports and not destination.exists()
+
+
+def test_requested_border_palette_and_exported_pixels(server, still, tmp_path, monkeypatch):
+    import shutil
+    from goosnav_frame.services import PRIMARY_COLORS
+    assert set(PRIMARY_COLORS) == {'#ff0000', '#009b24', '#0000ff', '#40e0d0', '#ff8000'}
+    _, app = server
+    source = tmp_path / 'source'
+    source.mkdir()
+    for i in range(5):
+        shutil.copy(still, source / f'{i}.png')
+    colors = iter(PRIMARY_COLORS)
+    monkeypatch.setattr('goosnav_frame.services.random.choice', lambda choices: next(colors))
+    settings = {'media': {'border_enabled': True, 'border_random': True, 'border_auto_skip': False}}
+    job = wait_job(app.start_batch(settings, str(source)))
+    assert job.state == 'done', job.public()
+    x, y, w, h = R.media_rect(S.normalize(settings), R.layout(S.normalize(settings)), 400, 300)
+    for result, color in zip(job.results, PRIMARY_COLORS):
+        image = np.asarray(Image.open(result['output']))
+        assert tuple(image[y-10, x+w//2]) == S.hex_rgb(color)
+
+
+def test_workspace_survives_app_restart(server, tmp_path):
+    from goosnav_frame.services import App
+    base, app = server
+    settings = {'media_fx': {'mode': 'web216', 'strength': 49, 'pixel': 1},
+                'retro': {'enabled': True, 'shadow': True},
+                'media': {'border_enabled': True, 'border_random': True}}
+    batch = {'batchFolder': str(tmp_path / 'source'), 'batchOutput': str(tmp_path / 'saved'),
+             'captionMode': 'random', 'captionFile': '/captions.txt', 'source': 'folder'}
+    code, _, _ = _req(base + '/api/workspace', 'POST', json.dumps({
+        'settings': settings, 'mode': 'batch', 'batch': batch
+    }).encode(), {'X-Frame-Token': 'tok'})
+    assert code == 200
+    restarted = App(app.data, app.config_dir, [])
+    assert restarted.workspace()['settings'] == S.normalize(settings)
+    assert restarted.workspace()['batch'] == batch
+    assert restarted.workspace()['mode'] == 'batch'
+    assert restarted.workspace()['imageDefaults'] is True
+
+
+def test_remote_workspace_preserves_host_paths_and_strips_them_from_state(server, monkeypatch):
+    from goosnav_frame.server import Handler
+    base, app = server
+    app.save_workspace({'settings': {}, 'batch': {'batchOutput': '/keep-this-path'}})
+    monkeypatch.setattr(Handler, '_local', lambda self: False)
+    code, _, _ = _req(base + '/api/workspace', 'POST', json.dumps({
+        'settings': {'media_fx': {'mode': 'crt'}}, 'batch': {'batchOutput': '/do-not-save'}
+    }).encode(), {'X-Frame-Token': 'tok'})
+    assert code == 200 and app.workspace()['batch']['batchOutput'] == '/keep-this-path'
+    assert app.workspace()['settings']['media_fx']['mode'] == 'crt'
+    state = json.loads(_req(base + '/api/state')[1])
+    assert 'batchOutput' not in state['workspace']['batch']

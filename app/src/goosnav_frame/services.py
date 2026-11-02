@@ -26,7 +26,7 @@ from .core import settings as S
 
 ID_RE = re.compile(r"^(up|lib)-[a-f0-9]{8,40}$")
 EXPORT_RE = re.compile(r"^[A-Za-z0-9_.-]{1,120}\.(mp4|png)$")
-PRIMARY_COLORS = ("#ff0000", "#0000ff", "#ffff00")
+PRIMARY_COLORS = ("#ff0000", "#009b24", "#0000ff", "#40e0d0", "#ff8000")
 
 DEFAULT_CAPTIONS = Path(__file__).resolve().parents[2] / "captions" / "Goosnav_Phrasebook_Curated.txt"
 
@@ -43,6 +43,42 @@ class ServiceError(Exception):
     def __init__(self, status: int, code: str, message: str):
         super().__init__(message)
         self.status, self.code, self.message = status, code, message
+
+
+def normalize_workspace(raw: dict, previous: dict | None = None, local: bool = True) -> dict:
+    out = copy.deepcopy(previous or {})
+    if isinstance(raw.get("settings"), dict):
+        out["settings"] = S.normalize(raw["settings"])
+        out["imageDefaults"] = True
+    if "mediaId" in raw:
+        mid = raw["mediaId"]
+        out["mediaId"] = mid if isinstance(mid, str) and ID_RE.fullmatch(mid) else None
+    if raw.get("mode") in ("single", "batch"):
+        out["mode"] = raw["mode"]
+    batch = raw.get("batch")
+    if isinstance(batch, dict):
+        saved = out.setdefault("batch", {})
+        for key in ("job", "lastJob", "captionMode", "source"):
+            if key in batch:
+                value = batch[key]
+                if key in ("job", "lastJob"):
+                    saved[key] = value if isinstance(value, str) and re.fullmatch(r"[a-f0-9]{16}", value) else None
+                elif key == "captionMode" and value in ("fixed", "random"):
+                    saved[key] = value
+                elif key == "source" and value in ("folder", "uploads") and (local or value == "uploads"):
+                    saved[key] = value
+        if local:
+            for key in ("batchFolder", "batchOutput", "captionFile", "destination"):
+                if key in batch and isinstance(batch[key], str):
+                    saved[key] = batch[key][:4096]
+        if isinstance(batch.get("uploads"), list):
+            saved["uploads"] = [
+                {"id": item["id"], "name": str(item.get("name", ""))[:200]}
+                for item in batch["uploads"][:500] if isinstance(item, dict)
+                and isinstance(item.get("id"), str) and ID_RE.fullmatch(item["id"])
+                and item["id"].startswith("up-")
+            ]
+    return out
 
 
 @dataclass
@@ -94,6 +130,8 @@ class App:
             raw = json.loads(self.config_path.read_text(encoding="utf-8"))
             if isinstance(raw.get("library_roots"), list):
                 cfg["library_roots"] = [str(r) for r in raw["library_roots"]][:20]
+            if isinstance(raw.get("workspace"), dict):
+                cfg["workspace"] = normalize_workspace(raw["workspace"])
             if isinstance(raw.get("presets"), dict):
                 cfg["presets"] = {str(k)[:60]: S.normalize(v) for k, v in raw["presets"].items()}
         except (OSError, ValueError, AttributeError):
@@ -109,6 +147,22 @@ class App:
         tmp = self.config_path.with_suffix(".tmp")
         tmp.write_text(json.dumps(self.config, indent=1), encoding="utf-8")
         os.replace(tmp, self.config_path)
+
+    def workspace(self, local: bool = True) -> dict | None:
+        with self.lock:
+            state = copy.deepcopy(self.config.get("workspace"))
+        if state and not local:
+            batch = state.get("batch", {})
+            for key in ("batchFolder", "batchOutput", "captionFile", "destination"):
+                batch.pop(key, None)
+            if batch.get("source") == "folder":
+                batch["source"] = "uploads"
+        return state
+
+    def save_workspace(self, raw: dict, local: bool = True) -> None:
+        with self.lock:
+            self.config["workspace"] = normalize_workspace(raw, self.config.get("workspace"), local)
+            self._save_config()
 
     # ------------------------------------------------------------ media
     def _scan_library(self, force: bool = False) -> dict[str, Path]:
@@ -364,20 +418,22 @@ class App:
 
     def start_batch(self, settings: dict, folder: str, output: str = "",
                     caption_mode: str = "fixed", caption_file: str = "", media_ids: list | None = None) -> Job:
+        jid = secrets.token_hex(8)
+        folder_name = f"goosnav_frame_{datetime.now():%Y-%m-%d_%H-%M-%S-%f}"
         if media_ids is not None:
             if not isinstance(media_ids, list) or not 1 <= len(media_ids) <= 500:
                 raise ServiceError(400, "BAD_BATCH", "Select 1–500 files")
             if any(not isinstance(mid, str) or not mid.startswith("up-") for mid in media_ids):
                 raise ServiceError(400, "BAD_BATCH", "Select uploaded files")
             files = [self.resolve(mid) for mid in dict.fromkeys(media_ids)]
-            destination = self.exports
+            parent = Path(output).expanduser().resolve() if output.strip() else self.exports
+            destination = parent / folder_name
         else:
             source = Path(folder).expanduser().resolve() if folder.strip() else None
             if source is None or not source.is_dir():
                 raise ServiceError(400, "BAD_FOLDER", "Enter an existing source folder")
-            destination = Path(output).expanduser().resolve() if output.strip() else source / "Goosnav Exports"
-            if destination == source:
-                raise ServiceError(400, "BAD_OUTPUT", "Choose a subfolder or a separate output folder")
+            parent = Path(output).expanduser().resolve() if output.strip() else source
+            destination = parent / folder_name
             files = sorted(p for p in source.iterdir() if p.is_file() and not p.name.startswith(".")
                            and p.suffix.lower() in M.MEDIA_EXT)
         if not files:
@@ -394,7 +450,7 @@ class App:
             if not captions or any(len(line) > 400 for line in captions):
                 raise ServiceError(400, "BAD_CAPTIONS", "Use nonblank captions of at most 400 characters per line")
         s = S.normalize(settings)
-        job = Job(id=secrets.token_hex(8), kind="batch", name="Folder batch",
+        job = Job(id=jid, kind="batch", name="Folder batch",
                   total=len(files), destination=str(destination))
         self.jobs[job.id] = job
 
@@ -424,7 +480,7 @@ class App:
                             else:
                                 X.export_mp4(item, str(path), out, cancel=job.cancel,
                                     progress=lambda f: setattr(job, "progress", (i + f) / len(files)))
-                            job.results.append({"source": str(path), "caption": caption, "border_color": item["media"]["border_color"] if item["media"]["border_enabled"] else None, "output": str(out), "download": "/api/exports/" + out.name if destination == self.exports else "", "error": ""})
+                            job.results.append({"source": str(path), "caption": caption, "border_color": item["media"]["border_color"] if item["media"]["border_enabled"] else None, "output": str(out), "download": f"/api/jobs/{job.id}/files/{out.name}", "error": ""})
                         except X.Cancelled:
                             if out:
                                 out.unlink(missing_ok=True)
@@ -448,6 +504,15 @@ class App:
 
         threading.Thread(target=run, daemon=True, name="batch-" + job.id).start()
         return job
+
+    def batch_file(self, jid: str, name: str) -> Path:
+        job = self.job(jid)
+        for result in list(job.results):
+            if not result.get("error") and result.get("output"):
+                path = Path(result["output"])
+                if path.name == name and path.is_file():
+                    return path
+        raise ServiceError(404, "NO_FILE", "That batch file is no longer available")
 
     def _prune_previews(self) -> None:
         files = sorted((self.data / "previews").glob("*.mp4"), key=lambda p: p.stat().st_mtime)

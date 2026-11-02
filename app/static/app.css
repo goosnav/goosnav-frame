@@ -102,3 +102,6 @@ button:disabled { opacity: .45; cursor: default; }
 
 #hostFolders label, #captionOptions label { display: block; margin: 8px 0; }
 #hostFolders input, #captionOptions input { width: 100%; }
+
+#batchDestination label { display: block; margin: 8px 0; }
+#batchSavedTo { overflow-wrap: anywhere; }

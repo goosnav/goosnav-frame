@@ -1,4 +1,4 @@
-Goosnav Frame 0.2.1
+Goosnav Frame 0.2.2
 
 Frames an image or video into an ad: a capital Helvetica title above, the
 media in the middle, an underlined Times link below. Edit the text and
@@ -9,7 +9,7 @@ OPEN THE APPLICATION
 Extract the complete ZIP. Keep every launcher beside the `app` folder.
 
 - macOS: double-click "Start Goosnav Frame.command" in this folder.
-  The header should show 0.2.1. Keep the Terminal window open while working.
+  The header should show 0.2.2. Keep the Terminal window open while working.
 - Windows x64: double-click "Open Goosnav Frame — Windows x64.exe".
 - Linux x86_64: double-click "Open Goosnav Frame — Linux x86_64.AppImage".
 - Linux ARM64: double-click "Open Goosnav Frame — Linux ARM64.AppImage".
@@ -67,8 +67,9 @@ reinstall on the next launch; your uploads and exports are not affected.
 SINGLE FILE OR FOLDER BATCH
 --------------------------
 Use the buttons at the top of the panel. Single opens a file picker. Batch offers Choose files and Upload folder.
-Use a local folder offers a macOS chooser, or a path field and Load path. It shows a sample and counts before export. Batch output defaults
-to a Goosnav Exports subfolder; you can choose a different directory.
+Choose folder offers a macOS chooser; Folder path accepts pasted paths.
+Batch output saves automatically into a goosnav_frame_DATE_TIME subfolder.
+Save to chooses a different parent directory.
 
 Media look has early-3D dither, web GIF, CRT, handheld and zine presets.
 The image preview updates as you adjust the look. All batch items use these
@@ -78,3 +79,12 @@ from the included phrasebook. See README.md for the complete workflow.
 A start script checks the running build before reusing it. If an older copy
 occupies the usual port, it opens the updated app on another port. Use the
 address printed by the launcher instead of an old bookmark.
+
+AUTOMATIC SAVING
+----------------
+Batch Export is at the bottom. Choose folder on this computer, then Export:
+all files save in a new goosnav_frame_DATE_TIME subfolder of the source.
+Save to can select a different parent directory. Uploaded batches also save
+automatically into a timestamped folder. No downloads are required.
+Settings and output preferences restore automatically between sessions.
+Random borders use red, green, blue, turquoise and orange.

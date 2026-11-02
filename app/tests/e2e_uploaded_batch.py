@@ -19,10 +19,10 @@ with sync_playwright() as p:
     expect(page.locator('#batchBtn')).to_be_enabled()
     page.locator('#batchBtn').click()
     expect(page.locator('#batchStatus')).to_have_text(f'{len(files)} / {len(files)} exported', timeout=60000)
-    expect(page.locator('#batchResults a[download]')).to_have_count(len(files))
-    with page.expect_download() as downloaded:
-        page.locator('#batchResults a[download]').first.click()
-    assert downloaded.value.suggested_filename.endswith(('.png', '.mp4'))
+    expect(page.locator('#batchSavedTo')).to_contain_text('Saved to')
+    assert page.locator('#batchResults a').count() == 0
+    destination = Path(page.locator('#batchSavedTo').inner_text().removeprefix('Saved to '))
+    assert len(list(destination.glob('*.png'))) + len(list(destination.glob('*.mp4'))) == len(files)
     page.reload()
     page.locator('#folderMode').click()
     expect(page.locator('#batchSelection li')).to_have_count(len(files))
@@ -32,4 +32,4 @@ with sync_playwright() as p:
     expect(page.locator('#folderMode')).to_be_visible()
     assert not errors, errors
     browser.close()
-print('PASS: visible batch, multiple uploads, mixed exports, download, reload, mobile width')
+print('PASS: multiple uploads, automatic mixed-file save, reload, mobile width')

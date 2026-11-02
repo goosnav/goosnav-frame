@@ -6,7 +6,13 @@ const TOKEN = document.querySelector('meta[name="frame-token"]').content;
 const $ = (id) => document.getElementById(id);
 const STORE = "goosnav-frame/v2";
 
+let workspaceReady = false;
+let workspaceTimer = null;
+let workspaceWrite = Promise.resolve();
+let currentMode = "single";
 let DEFAULTS = null;
+let isLocal = false;
+let exportDirectory = "";
 let settings = null;
 let mediaId = null;
 let mediaItems = [];
@@ -119,7 +125,7 @@ async function api(path, opts = {}) {
   if (!res.ok) {
     let msg = res.status + " " + res.statusText;
     try { const j = await res.json(); msg = j.error.message; } catch (e) { /* not json */ }
-    throw new Error(msg);
+    const error = new Error(msg); error.status = res.status; throw error;
   }
   return opts.raw ? res : res.json();
 }
@@ -189,7 +195,35 @@ function onField(path, value) {
   save(); schedulePreview();
 }
 
-function save() { localStorage.setItem(STORE, JSON.stringify({ settings, mediaId, imageDefaults: true })); }
+function save() {
+  localStorage.setItem(STORE, JSON.stringify({ settings, mediaId, imageDefaults: true }));
+  scheduleWorkspaceSave();
+}
+function workspaceSnapshot() {
+  let batch = {};
+  try { batch = JSON.parse(localStorage.getItem(STORE + "/batch") || "{}"); } catch (_) {}
+  return { settings, mediaId, imageDefaults: true, mode: currentMode, batch };
+}
+function scheduleWorkspaceSave() {
+  if (!workspaceReady) return;
+  clearTimeout(workspaceTimer);
+  workspaceTimer = setTimeout(flushWorkspace, 250);
+}
+function flushWorkspace() {
+  if (!workspaceReady) return Promise.resolve();
+  clearTimeout(workspaceTimer);
+  const snapshot = clone(workspaceSnapshot());
+  workspaceWrite = workspaceWrite.catch(() => {}).then(() => api("/api/workspace", { method: "POST", json: snapshot }));
+  workspaceWrite.catch(e => status("Could not save settings: " + e.message, true));
+  return workspaceWrite;
+}
+window.addEventListener("pagehide", () => {
+  if (!workspaceReady) return;
+  const snapshot = workspaceSnapshot();
+  if (JSON.stringify(snapshot).length > 55000) delete snapshot.batch.uploads;
+  fetch("/api/workspace", { method: "POST", keepalive: true,
+    headers: { "Content-Type": "application/json", "X-Frame-Token": TOKEN }, body: JSON.stringify(snapshot) }).catch(() => {});
+});
 
 // ------------------------------------------------------------------ preview
 let pvTimer = null, pvBusy = false, pvAgain = false, pvUrl = null;
@@ -412,6 +446,7 @@ $("resetAll").addEventListener("click", () => {
 // ------------------------------------------------------------------ host-only
 $("quit").addEventListener("click", async () => {
   if (!confirm("Stop Goosnav Frame? Other devices will lose access too.")) return;
+  await flushWorkspace();
   await api("/api/quit", { method: "POST", json: {} }).catch(() => {});
   document.body.innerHTML = "<p style='padding:24px'>Goosnav Frame has stopped. You can close this tab.</p>";
 });
@@ -422,9 +457,12 @@ $("rootsSave").addEventListener("click", async () => {
 });
 
 function workflow(batch) {
+  currentMode = batch ? "batch" : "single";
+  scheduleWorkspaceSave();
   $("singleMedia").hidden = batch;
   $("singleExport").hidden = batch;
   $("batchBox").hidden = !batch;
+  $("batchExport").hidden = !batch;
   $("singleMode").classList.toggle("primary", !batch);
   $("folderMode").classList.toggle("primary", batch);
   $("singleMode").setAttribute("aria-pressed", String(!batch));
@@ -440,7 +478,7 @@ async function inspectFolder() {
     $("folderSummary").textContent = `${data.images} images + ${data.videos} videos. ` + (data.sample ? `Preview: ${data.sample.name}.` : "No readable preview found.");
     if (data.sample) { await loadMedia(); selectMedia(data.sample.id); }
     else selectMedia(null);
-    batchSource = "folder"; batchUploads = []; drawBatchSelection();
+    batchSource = "folder"; batchUploads = []; $("batchUploadStatus").textContent = ""; drawBatchSelection();
     saveBatch();
   } catch (e) { $("folderSummary").textContent = e.message; }
 }
@@ -460,6 +498,8 @@ $("chooseCaptions").addEventListener("click", e => choosePath(e.currentTarget, "
 let batchUploads = [];
 let batchSource = "uploads";
 let batchUploading = false;
+let batchLastJob = null;
+let batchLastDestination = "";
 function drawBatchSelection() {
   $("batchSelection").replaceChildren(...batchUploads.map(item => {
     const row = document.createElement("li");
@@ -470,6 +510,9 @@ function drawBatchSelection() {
     remove.addEventListener("click", () => { batchUploads = batchUploads.filter(i => i.id !== item.id); drawBatchSelection(); saveBatch(); });
     row.append(preview, remove); return row;
   }));
+  $("batchOutput").placeholder = batchSource === "folder" && $("batchFolder").value
+    ? $("batchFolder").value
+    : exportDirectory;
   $("batchBtn").textContent = batchSource === "folder" ? "Export folder" : `Export batch${batchUploads.length ? " (" + batchUploads.length + ")" : ""}`;
 }
 async function uploadBatch(files) {
@@ -498,12 +541,14 @@ $("batchUploadFolder").addEventListener("change", e => { uploadBatch(e.target.fi
 // Folder batch state is separate from single-file previews and exports.
 let batchJob = null;
 function saveBatch() {
-  const data = { job: batchJob, uploads: batchUploads, source: batchSource };
+  const data = { job: batchJob, lastJob: batchLastJob, destination: batchLastDestination, uploads: batchUploads, source: batchSource };
   for (const id of ["batchFolder", "batchOutput", "captionMode", "captionFile"]) data[id] = $(id).value;
   localStorage.setItem(STORE + "/batch", JSON.stringify(data));
+  scheduleWorkspaceSave();
 }
 async function watchBatch(id) {
-  batchJob = id; saveBatch();
+  batchJob = id; batchLastJob = id; saveBatch();
+  $("openBatchFolder").hidden = true;
   $("batchBtn").disabled = true; $("batchCancel").hidden = false; $("batchBar").hidden = false;
   try {
     while (true) {
@@ -514,13 +559,22 @@ async function watchBatch(id) {
       $("batchResults").replaceChildren(...j.results.map(r => {
         const li = document.createElement("li");
         li.textContent = r.error ? r.source.split(/[\\/]/).pop() + ": " + r.error : r.output.split(/[\\/]/).pop();
-        if (r.download) { const a = document.createElement("a"); a.href = r.download; a.textContent = "Download"; a.setAttribute("download", ""); li.appendChild(a); }
         return li;
       }));
-      if (["done", "failed", "cancelled"].includes(j.state)) break;
+      if (["done", "failed", "cancelled"].includes(j.state)) {
+        if (successes) {
+          batchLastDestination = j.destination;
+          $("batchSavedTo").textContent = "Saved to " + j.destination;
+          $("openBatchFolder").hidden = !isLocal;
+        }
+        break;
+      }
       await new Promise(resolve => setTimeout(resolve, 600));
     }
-  } catch (e) { $("batchStatus").textContent = e.message; }
+  } catch (e) {
+    $("batchStatus").textContent = e.status === 404 && batchLastDestination ? "" : e.message;
+    if (batchLastDestination) $("batchSavedTo").textContent = "Last saved to " + batchLastDestination;
+  }
   finally {
     batchJob = null; saveBatch(); $("batchBtn").disabled = false;
     $("batchCancel").hidden = true; $("batchBar").hidden = true;
@@ -534,6 +588,7 @@ $("batchBtn").addEventListener("click", async () => {
       settings, folder: $("batchFolder").value, output: $("batchOutput").value,
       caption_mode: $("captionMode").value, caption_file: $("captionFile").value
     }});
+    batchLastDestination = ""; $("batchSavedTo").textContent = "";
     await watchBatch(job.id);
   } catch (e) { $("batchStatus").textContent = e.message; $("batchBtn").disabled = false; }
 });
@@ -541,12 +596,25 @@ $("batchCancel").addEventListener("click", async () => {
   if (batchJob) await api("/api/jobs/" + batchJob + "/cancel", { method: "POST", json: {} });
 });
 
+for (const id of ["batchFolder", "batchOutput", "captionMode", "captionFile"]) {
+  $(id).addEventListener("input", saveBatch);
+  $(id).addEventListener("change", saveBatch);
+}
+
+$("openBatchFolder").addEventListener("click", async () => {
+  if (!batchLastJob) return;
+  try { await api("/api/jobs/" + batchLastJob + "/open-folder", { method: "POST", json: {} }); }
+  catch (e) { $("batchStatus").textContent = e.message; }
+});
+
 // ------------------------------------------------------------------ boot
 (async function boot() {
   try {
     const st = await api("/api/state");
+    isLocal = st.local; exportDirectory = st.export_directory || "";
     DEFAULTS = st.defaults; FONTS = st.fonts; PRESET_DATA = st.presets;
     let saved = {}; try { saved = JSON.parse(localStorage.getItem(STORE) || "{}"); } catch (e) { saved = {}; }
+    saved = st.workspace || saved;
     settings = merge(DEFAULTS, saved.settings || {});
     if (!saved.imageDefaults) {
       settings.canvas.layout = "stacked";
@@ -559,23 +627,33 @@ $("batchCancel").addEventListener("click", async () => {
     if (st.lan.length) $("lan").textContent = "Other devices: " + st.lan.join("  ");
     if (st.local) { $("quit").hidden = false; $("libraryBox").hidden = false; $("roots").value = (st.library_roots || []).join("\n"); }
     if (st.local) {
+      $("chooseFolder").hidden = false;
+      $("browserFolder").hidden = true;
+      $("batchDestination").hidden = false;
       $("hostFolders").hidden = false;
       $("captionOptions").hidden = false;
       $("captionFile").value = st.caption_file;
     }
     let batchSaved = {};
     try { batchSaved = JSON.parse(localStorage.getItem(STORE + "/batch") || "{}"); } catch (_) {}
+    batchSaved = st.workspace?.batch || batchSaved;
     batchUploads = Array.isArray(batchSaved.uploads) ? batchSaved.uploads : [];
     batchSource = st.local && batchSaved.source === "folder" ? "folder" : "uploads";
     for (const id of ["batchFolder", "batchOutput", "captionMode", "captionFile"]) {
       if (batchSaved[id]) $(id).value = batchSaved[id];
     }
     drawBatchSelection();
-    if (batchSaved.job) { workflow(true); watchBatch(batchSaved.job); }
+    batchLastJob = batchSaved.lastJob || null; batchLastDestination = batchSaved.destination || "";
     buildForm(); fillForm(); drawPresets();
     await loadMedia();
     batchUploads = batchUploads.filter(i => mediaItems.some(m => m.id === i.id)); drawBatchSelection();
     if (mediaId && !mediaItems.some((m) => m.id === mediaId)) mediaId = null;
     drawMedia(); await refreshPlan(); renderPreview(); loadExports();
+    workflow(saved.mode ? saved.mode === "batch" : batchUploads.length > 0 || batchSource === "folder");
+    workspaceReady = true; save(); saveBatch();
+    if (batchSaved.job || batchLastJob) {
+      if (batchSaved.job) workflow(true);
+      watchBatch(batchSaved.job || batchLastJob);
+    }
   } catch (e) { status("Could not start: " + e.message, true); }
 })();

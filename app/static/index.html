@@ -60,27 +60,22 @@
     <details id="batchBox" open hidden>
       <summary>Batch</summary>
       <div class="row">
-        <label class="button primary">Choose files<input id="batchFiles" type="file" multiple accept="image/*,video/*" hidden></label>
-        <label class="button">Upload folder<input id="batchUploadFolder" type="file" webkitdirectory multiple hidden></label>
+        <button id="chooseFolder" class="primary" hidden>Choose folder…</button>
+        <label class="button">Choose files<input id="batchFiles" type="file" multiple accept="image/*,video/*" hidden></label>
+        <label id="browserFolder" class="button">Upload folder<input id="batchUploadFolder" type="file" webkitdirectory multiple hidden></label>
       </div>
       <ul id="batchSelection" class="exports"></ul>
       <p id="batchUploadStatus" role="status"></p>
-      <details id="hostFolders" hidden><summary>Use a local folder</summary>
-      <div class="row"><button id="chooseFolder" class="primary">Choose folder…</button><button id="inspectFolder">Load path</button></div>
       <p id="folderSummary" class="muted small"></p>
-      <label>Source folder<input id="batchFolder" type="text" placeholder="/path/to/media"></label>
-      <div class="row"><button id="chooseOutput">Choose output folder…</button></div>
-      <label>Output folder (optional)<input id="batchOutput" type="text" placeholder="Goosnav Exports"></label>
+      <details id="hostFolders" hidden><summary>Folder path</summary>
+        <label>Source folder<input id="batchFolder" type="text" placeholder="/path/to/media"></label>
+        <button id="inspectFolder">Load path</button>
       </details>
       <label>Top caption<select id="captionMode"><option value="fixed">Same title</option><option value="random">Random phrasebook line</option></select></label>
       <details id="captionOptions" hidden><summary>Caption file</summary>
       <div class="row"><button id="chooseCaptions">Choose caption file…</button></div>
       <label>Caption text file<input id="captionFile" type="text"></label>
       </details>
-      <div class="row"><button id="batchBtn" class="primary">Export batch</button><button id="batchCancel" hidden>Cancel</button></div>
-      <p id="batchStatus" role="status"></p>
-      <div id="batchBar" class="bar" hidden><span></span></div>
-      <ul id="batchResults" class="exports"></ul>
     </details>
 
     <details open>
@@ -108,8 +103,6 @@
       <div id="f-media" class="fields"></div>
     </details>
 
-
-
     <details>
       <summary>Canvas</summary>
       <div id="f-canvas" class="fields"></div>
@@ -134,6 +127,13 @@
       <div class="row"><button id="resetAll" class="ghost">Reset everything to defaults</button></div>
     </details>
 
+    <details id="libraryBox" hidden>
+      <summary>Library folders</summary>
+      <p class="muted small">Folders on this computer to list in Media (one per line). Only editable here, not from other devices.</p>
+      <textarea id="roots" rows="3"></textarea>
+      <div class="row"><button id="rootsSave">Save folders</button></div>
+    </details>
+
     <details open id="singleExport">
       <summary>Export</summary>
       <div id="f-export" class="fields"></div>
@@ -146,12 +146,20 @@
       <ul id="exports" class="exports"></ul>
     </details>
 
-
-    <details id="libraryBox" hidden>
-      <summary>Library folders</summary>
-      <p class="muted small">Folders on this computer to list in Media (one per line). Only editable here, not from other devices.</p>
-      <textarea id="roots" rows="3"></textarea>
-      <div class="row"><button id="rootsSave">Save folders</button></div>
+    <details id="batchExport" open hidden>
+      <summary>Export</summary>
+      <div id="batchDestination" hidden>
+        <label>Save to<input id="batchOutput" type="text"></label>
+        <div class="row"><button id="chooseOutput">Choose output folder…</button></div>
+      </div>
+      <div class="row"><button id="batchBtn" class="primary">Export batch</button><button id="batchCancel" hidden>Cancel</button></div>
+      <p id="batchStatus" role="status"></p>
+      <p id="batchSavedTo" class="muted small"></p>
+      <div id="batchBar" class="bar" hidden><span></span></div>
+      <div class="row">
+        <button id="openBatchFolder" hidden>Open folder</button>
+      </div>
+      <ul id="batchResults" class="exports"></ul>
     </details>
 
     <p class="muted small foot">Goosnav Frame {{VERSION}}</p>
